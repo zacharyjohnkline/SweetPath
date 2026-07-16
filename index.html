@@ -967,7 +967,7 @@
       </div>
 
       <button class="start-btn" id="start-btn">Start Adventure</button>
-      <div style="margin-top:14px; font-size:11px; color:#c5a0b8; font-weight:500;">build v7 — follow-cam · host phone · names</div>
+      <div style="margin-top:14px; font-size:11px; color:#c5a0b8; font-weight:500;">build v8 — host can play too</div>
     </div>
   </div>
 
@@ -1006,7 +1006,7 @@
     <div id="ctrl-host-pad" style="display:none; width:100%; max-width:400px; text-align:center;">
       <div id="ctrl-host-count" style="display:flex; gap:10px; justify-content:center; margin:8px 0 16px;"></div>
       <button id="ctrl-host-primary" class="ctrl-action"
-        style="background:linear-gradient(135deg,#4a2545,#8a5a78); font-size:24px; padding:26px 16px;">…</button>
+        style="background:linear-gradient(135deg,#4a2545,#8a5a78); font-size:20px; padding:16px;">…</button>
       <div style="font-size:12px; color:#8a5a78; font-weight:500;">This button presses whatever big button is on the game screen.</div>
     </div>
     <div id="ctrl-pad">
@@ -1078,7 +1078,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // ===== Game Configuration =====
-console.log('Sweet Path build v7 (follow-cam, host phone, player names)');
+console.log('Sweet Path build v8 (host can also be a player)');
 
 const COLORS = {
   red:    { hex: '#ff4d6d', three: 0xff4d6d },
@@ -3050,6 +3050,18 @@ function initControllerMode(code) {
   let autoClaimSlot = (sameRoom && Number.isInteger(saved.slot)) ? saved.slot : null;
   let autoClaimHost = !!(sameRoom && saved.host);
   if (saved && saved.name) nameInput.value = saved.name;
+  let savedObj = sameRoom && saved ? saved : {};
+  function persist(patch) {
+    savedObj = { ...savedObj, code: code.toUpperCase(), ...patch };
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(savedObj)); } catch (e) {}
+  }
+  function updateHeader() {
+    const header = document.getElementById('ctrl-header');
+    if (myInfo && isHost) header.textContent = myInfo.name + ' 👑';
+    else if (myInfo) header.textContent = myInfo.name;
+    else if (isHost) header.textContent = 'Host 👑';
+    if (myInfo) header.style.color = myInfo.colorHex;
+  }
 
   // Belt-and-suspenders zoom guards: some browsers ignore parts of the
   // viewport meta, so block pinch and double-tap zoom at the event level too.
@@ -3091,13 +3103,13 @@ function initControllerMode(code) {
 
   function onMsg(msg) {
     if (!msg || typeof msg !== 'object') return;
-    if (msg.type === 'slots' && !myInfo && !isHost) {
-      // If this phone refreshed mid-game, reclaim its old role automatically
+    if (msg.type === 'slots' && !myInfo) {
+      // If this phone refreshed mid-game, reclaim its old role(s) automatically.
+      // A phone can be BOTH the host and a player, so restore each independently.
       if (autoClaimHost) {
         autoClaimHost = false;
         statusEl.textContent = 'Rejoining as host…';
         conn.send({ type: 'claimHost', deviceId });
-        return;
       }
       if (autoClaimSlot !== null) {
         const mine = msg.slots.find(sl => sl.slot === autoClaimSlot);
@@ -3119,25 +3131,27 @@ function initControllerMode(code) {
       });
     } else if (msg.type === 'claimed') {
       myInfo = msg;
-      try { localStorage.setItem(SAVE_KEY, JSON.stringify({ code: code.toUpperCase(), slot: msg.slot, name: msg.name })); } catch (e) {}
+      persist({ slot: msg.slot, name: msg.name });
       slotsEl.style.display = 'none';
       nameRow.style.display = 'none';
-      hostJoinBtn.style.display = 'none';
+      // Still allow becoming the host after picking a character
+      hostJoinBtn.style.display = isHost ? 'none' : 'block';
       padEl.classList.add('show');
-      const header = document.getElementById('ctrl-header');
-      header.textContent = msg.name;
-      header.style.color = msg.colorHex;
+      updateHeader();
       mashBtn.style.background = `linear-gradient(160deg, ${msg.colorHex}, ${msg.colorHex}cc)`;
-      statusEl.textContent = `You're ${msg.name}! Waiting for the game…`;
+      statusEl.textContent = isHost
+        ? `You're ${msg.name} AND the host!`
+        : `You're ${msg.name}! Waiting for the game…`;
     } else if (msg.type === 'hostClaimed') {
       isHost = true;
-      try { localStorage.setItem(SAVE_KEY, JSON.stringify({ code: code.toUpperCase(), host: true })); } catch (e) {}
-      slotsEl.style.display = 'none';
-      nameRow.style.display = 'none';
+      persist({ host: true });
       hostJoinBtn.style.display = 'none';
       hostPad.style.display = 'block';
-      document.getElementById('ctrl-header').textContent = 'Host 👑';
-      statusEl.textContent = "You're running the show!";
+      updateHeader();
+      // Still allow picking a character after becoming the host
+      statusEl.textContent = myInfo
+        ? `You're ${myInfo.name} AND the host!`
+        : "You're running the show! You can also pick a character below to play.";
     } else if (msg.type === 'hostState' && isHost) {
       if (msg.label) {
         hostPrimary.textContent = msg.label;
