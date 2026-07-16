@@ -995,7 +995,19 @@
   <div id="controller-screen">
     <div id="ctrl-header">Sweet Path 🎮</div>
     <div id="ctrl-status">Connecting…</div>
+    <div id="ctrl-name-row" style="width:100%; max-width:340px; margin-bottom:12px; display:none;">
+      <input id="ctrl-name" maxlength="14" placeholder="Type your name!"
+        style="width:100%; padding:14px; border-radius:16px; border:3px solid var(--c-pink); font-family:'Fredoka',sans-serif; font-size:18px; font-weight:600; text-align:center; color:var(--c-text);" />
+    </div>
     <div id="ctrl-slots"></div>
+    <button id="ctrl-host-join" class="ctrl-slot-btn"
+      style="background:linear-gradient(135deg,#4a2545,#8a5a78); width:100%; max-width:340px; margin-top:10px; display:none;">👑 Join as Host</button>
+    <div id="ctrl-host-pad" style="display:none; width:100%; max-width:400px; text-align:center;">
+      <div id="ctrl-host-count" style="display:flex; gap:10px; justify-content:center; margin:8px 0 16px;"></div>
+      <button id="ctrl-host-primary" class="ctrl-action"
+        style="background:linear-gradient(135deg,#4a2545,#8a5a78); font-size:24px; padding:26px 16px;">…</button>
+      <div style="font-size:12px; color:#8a5a78; font-weight:500;">This button presses whatever big button is on the game screen.</div>
+    </div>
     <div id="ctrl-pad">
       <button id="ctrl-mash">MASH!</button>
       <button id="ctrl-draw" class="ctrl-action">🃏 Draw Card</button>
@@ -1214,6 +1226,7 @@ function showMashScreen(pendingPlayers) {
 
   function startCountdown() {
     actionBtn.style.display = 'none';
+    broadcastHostState();
     let n = 3;
     countdownEl.classList.remove('go');
     countdownEl.textContent = n;
@@ -1278,6 +1291,7 @@ function showMashScreen(pendingPlayers) {
       document.getElementById('game-ui').style.display = 'block';
       startGame(order.map(e => e.player));
     };
+    broadcastHostState();
   }
 
   actionBtn.textContent = 'Start the Clock!';
@@ -1350,6 +1364,8 @@ function buildPath() {
 
 // ===== Three.js scene =====
 let scene, camera, renderer, controls;
+let followDist = 16;      // camera distance sized to show ~3 tiles ahead & behind
+let lastUserOrbit = -99999; // when the user last dragged/zoomed manually
 let pathPoints = [];
 let pawns = [];
 let players = [];
@@ -1390,9 +1406,11 @@ function initThree() {
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  controls.minDistance = 15;
+  controls.minDistance = 6;
   controls.maxDistance = 70;
   controls.maxPolarAngle = Math.PI / 2.1;
+  controls.enablePan = false; // the follow camera drives the target
+  controls.addEventListener('start', () => { lastUserOrbit = performance.now(); });
 
   // Lighting
   const ambient = new THREE.AmbientLight(0xfff0f5, 0.6);
@@ -2067,6 +2085,23 @@ function onResize() {
 
 function animate() {
   requestAnimationFrame(animate);
+
+  // ===== Follow camera =====
+  // Glide the orbit target to the active player's pawn each frame. The user
+  // can still drag to rotate and pinch/scroll to zoom; a few seconds after
+  // they let go, the zoom eases back to the follow distance.
+  const activePawn = pawns[currentPlayerIdx];
+  if (activePawn) {
+    const desired = new THREE.Vector3(activePawn.position.x, TILE_TOP_Y, activePawn.position.z);
+    const offset = camera.position.clone().sub(controls.target);
+    if (performance.now() - lastUserOrbit > 3000) {
+      const len = offset.length();
+      offset.setLength(len + (followDist - len) * 0.03);
+    }
+    controls.target.lerp(desired, 0.07);
+    camera.position.copy(controls.target).add(offset);
+  }
+
   controls.update();
 
   const t = performance.now() * 0.003;
@@ -2111,6 +2146,9 @@ function startGame(plyrs) {
   initThree();
   buildBoard();
   spawnPawns();
+  // Size the follow camera so roughly 3 tiles ahead and 3 behind are in view
+  const tileSpacing = pathPoints[1].distanceTo(pathPoints[2]);
+  followDist = tileSpacing * 5.5;
   cardArea = document.getElementById('card-area');
   deck = document.getElementById('deck');
   drawnCardEl = document.getElementById('drawn-card');
@@ -2291,6 +2329,7 @@ function startDuel(contenders, space) {
 
   function startCountdown() {
     actionBtn.style.display = 'none';
+    broadcastHostState();
     let n = 3;
     countdownEl.textContent = n;
     const cd = setInterval(() => {
@@ -2357,6 +2396,7 @@ function startDuel(contenders, space) {
       updateTopBar();
       updateBonusButton();
     };
+    broadcastHostState();
   }
 
   actionBtn.textContent = 'Mash!';
@@ -2739,6 +2779,7 @@ let remotePressHandler = null; // set while a mash contest is running
 const slotConns = [null, null, null, null, null]; // one connection per player slot
 const slotOwners = [null, null, null, null, null]; // device ID that owns each character
 const allConns = new Set();
+const hostConns = new Set(); // phones acting as the game host/admin
 
 function randomCode() {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no confusable 0/O/1/I/L
@@ -2782,6 +2823,7 @@ function enablePhoneControllers() {
     conn.on('data', (msg) => handleControllerMsg(conn, msg));
     conn.on('close', () => {
       allConns.delete(conn);
+      hostConns.delete(conn);
       const slot = slotConns.indexOf(conn);
       if (slot !== -1) slotConns[slot] = null;
       updatePhoneStatus();
@@ -2838,9 +2880,57 @@ function updatePhoneStatus() {
   if (chips.length) el.innerHTML = 'Connected: ' + chips.join(' ');
 }
 
+// The big button currently waiting to be pressed on the game screen, if any.
+// This is what a host phone's admin button remote-clicks.
+function currentPrimaryButton() {
+  const duel = document.getElementById('duel-screen');
+  if (duel.classList.contains('show')) {
+    const b = document.getElementById('duel-action-btn');
+    return b.style.display === 'none' ? null : b;
+  }
+  const mash = document.getElementById('mash-screen');
+  if (mash.classList.contains('show')) {
+    const b = document.getElementById('mash-action-btn');
+    return b.style.display === 'none' ? null : b;
+  }
+  if (setupScreen.style.display !== 'none') return document.getElementById('start-btn');
+  const win = document.getElementById('win-screen');
+  if (win.classList.contains('show')) return win.querySelector('.start-btn');
+  return null;
+}
+
+function sendHostState(conn) {
+  const btn = currentPrimaryButton();
+  safeSend(conn, {
+    type: 'hostState',
+    label: btn ? btn.textContent.trim() : null,
+    canSetCount: !gameStarted && setupScreen.style.display !== 'none',
+    count: playerCount,
+  });
+}
+function broadcastHostState() { hostConns.forEach(c => sendHostState(c)); }
+
 function handleControllerMsg(conn, msg) {
   if (!msg || typeof msg !== 'object') return;
   if (msg.type === 'hello') { sendSlots(conn); return; }
+  if (msg.type === 'claimHost') {
+    conn._isHost = true;
+    hostConns.add(conn);
+    safeSend(conn, { type: 'hostClaimed' });
+    sendHostState(conn);
+    return;
+  }
+  if (msg.type === 'admin' && conn._isHost) {
+    if (msg.action === 'primary') {
+      const btn = currentPrimaryButton();
+      if (btn) btn.click();
+    } else if (msg.action === 'setCount' && !gameStarted) {
+      const target = document.querySelector(`.pc-btn[data-count="${msg.count | 0}"]`);
+      if (target) target.click();
+    }
+    broadcastHostState();
+    return;
+  }
   if (msg.type === 'claim') {
     const sl = msg.slot | 0;
     const deviceId = typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 32) : null;
@@ -2855,6 +2945,11 @@ function handleControllerMsg(conn, msg) {
         if (old && old !== conn) {
           allConns.delete(old);
           try { old.close(); } catch (e) {}
+        }
+        // Adopt the name the player typed on their phone (before game start)
+        if (!gameStarted && typeof msg.name === 'string' && msg.name.trim()) {
+          const nameEl = document.getElementById(`p-name-${sl}`);
+          if (nameEl) nameEl.value = msg.name.trim().slice(0, 14);
         }
         slotConns[sl] = conn;
         slotOwners[sl] = deviceId || slotOwners[sl];
@@ -2897,7 +2992,10 @@ function sendStateTo(conn) {
     finished: !!(pl && pl.finished),
   });
 }
-function broadcastState() { slotConns.forEach(c => c && sendStateTo(c)); }
+function broadcastState() {
+  slotConns.forEach(c => c && sendStateTo(c));
+  broadcastHostState();
+}
 
 document.getElementById('enable-phones-btn').addEventListener('click', enablePhoneControllers);
 document.getElementById('join-link').addEventListener('click', (e) => {
@@ -2920,7 +3018,14 @@ function initControllerMode(code) {
   const mashBtn = document.getElementById('ctrl-mash');
   const drawBtn = document.getElementById('ctrl-draw');
   const bonusBtn = document.getElementById('ctrl-bonus');
+  const nameRow = document.getElementById('ctrl-name-row');
+  const nameInput = document.getElementById('ctrl-name');
+  const hostJoinBtn = document.getElementById('ctrl-host-join');
+  const hostPad = document.getElementById('ctrl-host-pad');
+  const hostPrimary = document.getElementById('ctrl-host-primary');
+  const hostCountRow = document.getElementById('ctrl-host-count');
   let myInfo = null;
+  let isHost = false;
   let conn = null;
 
   // A permanent random ID for THIS phone's browser, stored like a cookie.
@@ -2934,12 +3039,14 @@ function initControllerMode(code) {
     try { localStorage.setItem(DEVICE_KEY, deviceId); } catch (e) {}
   }
 
-  // Remember which character this phone claimed so a refresh rejoins automatically
+  // Remember which character (or host role) this phone claimed so a refresh rejoins automatically
   const SAVE_KEY = 'sweetpath_ctrl';
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
-  let autoClaimSlot = (saved && saved.code === code.toUpperCase() && Number.isInteger(saved.slot))
-    ? saved.slot : null;
+  const sameRoom = !!(saved && saved.code === code.toUpperCase());
+  let autoClaimSlot = (sameRoom && Number.isInteger(saved.slot)) ? saved.slot : null;
+  let autoClaimHost = !!(sameRoom && saved.host);
+  if (saved && saved.name) nameInput.value = saved.name;
 
   // Belt-and-suspenders zoom guards: some browsers ignore parts of the
   // viewport meta, so block pinch and double-tap zoom at the event level too.
@@ -2965,7 +3072,9 @@ function initControllerMode(code) {
   peer.on('open', () => {
     conn = peer.connect('sweetpath-' + code.toUpperCase(), { reliable: true });
     conn.on('open', () => {
-      statusEl.textContent = 'Connected! Pick your player:';
+      statusEl.textContent = 'Connected! Type your name, then pick your player:';
+      nameRow.style.display = 'block';
+      hostJoinBtn.style.display = 'block';
       conn.send({ type: 'hello' });
     });
     conn.on('data', onMsg);
@@ -2979,14 +3088,20 @@ function initControllerMode(code) {
 
   function onMsg(msg) {
     if (!msg || typeof msg !== 'object') return;
-    if (msg.type === 'slots' && !myInfo) {
-      // If this phone refreshed mid-game, reclaim its old player automatically
+    if (msg.type === 'slots' && !myInfo && !isHost) {
+      // If this phone refreshed mid-game, reclaim its old role automatically
+      if (autoClaimHost) {
+        autoClaimHost = false;
+        statusEl.textContent = 'Rejoining as host…';
+        conn.send({ type: 'claimHost', deviceId });
+        return;
+      }
       if (autoClaimSlot !== null) {
         const mine = msg.slots.find(sl => sl.slot === autoClaimSlot);
         autoClaimSlot = null; // only try once
         if (mine) {
           statusEl.textContent = `Rejoining as ${mine.name}…`;
-          conn.send({ type: 'claim', slot: mine.slot, deviceId });
+          conn.send({ type: 'claim', slot: mine.slot, deviceId, name: nameInput.value.trim() });
           return;
         }
       }
@@ -2996,19 +3111,48 @@ function initControllerMode(code) {
         b.className = 'ctrl-slot-btn';
         b.style.background = sl.colorHex;
         b.textContent = sl.taken ? `${sl.name} (rejoin)` : sl.name;
-        b.onclick = () => conn.send({ type: 'claim', slot: sl.slot, deviceId });
+        b.onclick = () => conn.send({ type: 'claim', slot: sl.slot, deviceId, name: nameInput.value.trim() });
         slotsEl.appendChild(b);
       });
     } else if (msg.type === 'claimed') {
       myInfo = msg;
-      try { localStorage.setItem(SAVE_KEY, JSON.stringify({ code: code.toUpperCase(), slot: msg.slot })); } catch (e) {}
+      try { localStorage.setItem(SAVE_KEY, JSON.stringify({ code: code.toUpperCase(), slot: msg.slot, name: msg.name })); } catch (e) {}
       slotsEl.style.display = 'none';
+      nameRow.style.display = 'none';
+      hostJoinBtn.style.display = 'none';
       padEl.classList.add('show');
       const header = document.getElementById('ctrl-header');
       header.textContent = msg.name;
       header.style.color = msg.colorHex;
       mashBtn.style.background = `linear-gradient(160deg, ${msg.colorHex}, ${msg.colorHex}cc)`;
       statusEl.textContent = `You're ${msg.name}! Waiting for the game…`;
+    } else if (msg.type === 'hostClaimed') {
+      isHost = true;
+      try { localStorage.setItem(SAVE_KEY, JSON.stringify({ code: code.toUpperCase(), host: true })); } catch (e) {}
+      slotsEl.style.display = 'none';
+      nameRow.style.display = 'none';
+      hostJoinBtn.style.display = 'none';
+      hostPad.style.display = 'block';
+      document.getElementById('ctrl-header').textContent = 'Host 👑';
+      statusEl.textContent = "You're running the show!";
+    } else if (msg.type === 'hostState' && isHost) {
+      if (msg.label) {
+        hostPrimary.textContent = msg.label;
+        hostPrimary.disabled = false;
+      } else {
+        hostPrimary.textContent = 'Waiting…';
+        hostPrimary.disabled = true;
+      }
+      hostCountRow.innerHTML = '';
+      if (msg.canSetCount) {
+        for (let n = 2; n <= 5; n++) {
+          const b = document.createElement('button');
+          b.className = 'pc-btn' + (n === msg.count ? ' active' : '');
+          b.textContent = n;
+          b.onclick = () => conn.send({ type: 'admin', action: 'setCount', count: n });
+          hostCountRow.appendChild(b);
+        }
+      }
     } else if (msg.type === 'denied') {
       statusEl.textContent = (msg.reason || 'Could not claim that player') + ' Pick one below!';
       conn.send({ type: 'hello' });
@@ -3029,6 +3173,9 @@ function initControllerMode(code) {
       bonusBtn.classList.remove('show');
     }
   }
+
+  hostJoinBtn.addEventListener('click', () => { if (conn && conn.open) conn.send({ type: 'claimHost', deviceId }); });
+  hostPrimary.addEventListener('click', () => { if (conn && conn.open) conn.send({ type: 'admin', action: 'primary' }); });
 
   mashBtn.addEventListener('pointerdown', (e) => {
     e.preventDefault();
