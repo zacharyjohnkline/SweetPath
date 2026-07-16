@@ -967,7 +967,7 @@
       </div>
 
       <button class="start-btn" id="start-btn">Start Adventure</button>
-      <div style="margin-top:14px; font-size:11px; color:#c5a0b8; font-weight:500;">build v8 — host can play too</div>
+      <div style="margin-top:14px; font-size:11px; color:#c5a0b8; font-weight:500;">build v9 — host passcode</div>
     </div>
   </div>
 
@@ -1003,6 +1003,12 @@
     <div id="ctrl-slots"></div>
     <button id="ctrl-host-join" class="ctrl-slot-btn"
       style="background:linear-gradient(135deg,#4a2545,#8a5a78); width:100%; max-width:340px; margin-top:10px; display:none;">👑 Join as Host</button>
+    <div id="ctrl-host-pass" style="display:none; width:100%; max-width:340px; margin-top:10px; gap:8px;">
+      <input id="ctrl-pass-input" type="password" autocomplete="off" placeholder="Host passcode"
+        style="flex:1; padding:14px; border-radius:16px; border:3px solid #8a5a78; font-family:'Fredoka',sans-serif; font-size:16px; font-weight:600; color:var(--c-text); min-width:0;" />
+      <button id="ctrl-pass-go" class="ctrl-slot-btn"
+        style="background:linear-gradient(135deg,#4a2545,#8a5a78); flex:0 0 auto; padding:14px 20px;">Go</button>
+    </div>
     <div id="ctrl-host-pad" style="display:none; width:100%; max-width:400px; text-align:center;">
       <div id="ctrl-host-count" style="display:flex; gap:10px; justify-content:center; margin:8px 0 16px;"></div>
       <button id="ctrl-host-primary" class="ctrl-action"
@@ -1078,7 +1084,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // ===== Game Configuration =====
-console.log('Sweet Path build v8 (host can also be a player)');
+console.log('Sweet Path build v9 (host passcode protection)');
 
 const COLORS = {
   red:    { hex: '#ff4d6d', three: 0xff4d6d },
@@ -2783,6 +2789,8 @@ const slotConns = [null, null, null, null, null]; // one connection per player s
 const slotOwners = [null, null, null, null, null]; // device ID that owns each character
 const allConns = new Set();
 const hostConns = new Set(); // phones acting as the game host/admin
+const HOST_PASS = atob('SG9uM3lEM3chISE='); // host passcode (lightly obscured)
+const approvedHostDevices = new Set(); // devices that entered the passcode correctly
 
 function randomCode() {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no confusable 0/O/1/I/L
@@ -2917,10 +2925,21 @@ function handleControllerMsg(conn, msg) {
   if (!msg || typeof msg !== 'object') return;
   if (msg.type === 'hello') { sendSlots(conn); return; }
   if (msg.type === 'claimHost') {
-    conn._isHost = true;
-    hostConns.add(conn);
-    safeSend(conn, { type: 'hostClaimed' });
-    sendHostState(conn);
+    const devId = typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 32) : null;
+    const passOk = typeof msg.pass === 'string' && msg.pass === HOST_PASS;
+    const remembered = !!(devId && approvedHostDevices.has(devId));
+    // Host powers require the passcode — or being a device that already
+    // entered it correctly this session (so the real host's refreshes rejoin
+    // without retyping).
+    if (passOk || remembered) {
+      if (devId) approvedHostDevices.add(devId);
+      conn._isHost = true;
+      hostConns.add(conn);
+      safeSend(conn, { type: 'hostClaimed' });
+      sendHostState(conn);
+    } else {
+      safeSend(conn, { type: 'hostDenied', reason: 'Wrong passcode!' });
+    }
     return;
   }
   if (msg.type === 'admin' && conn._isHost) {
@@ -3146,6 +3165,7 @@ function initControllerMode(code) {
       isHost = true;
       persist({ host: true });
       hostJoinBtn.style.display = 'none';
+      document.getElementById('ctrl-host-pass').style.display = 'none';
       hostPad.style.display = 'block';
       updateHeader();
       // Still allow picking a character after becoming the host
@@ -3170,6 +3190,11 @@ function initControllerMode(code) {
           hostCountRow.appendChild(b);
         }
       }
+    } else if (msg.type === 'hostDenied') {
+      statusEl.textContent = '❌ ' + (msg.reason || 'Wrong passcode!') + ' Try again — or just pick a character and play.';
+      const pi = document.getElementById('ctrl-pass-input');
+      pi.value = '';
+      document.getElementById('ctrl-host-pass').style.display = 'flex';
     } else if (msg.type === 'denied') {
       statusEl.textContent = (msg.reason || 'Could not claim that player') + ' Pick one below!';
       conn.send({ type: 'hello' });
@@ -3191,16 +3216,26 @@ function initControllerMode(code) {
     }
   }
 
+  const hostPassRow = document.getElementById('ctrl-host-pass');
+  const passInput = document.getElementById('ctrl-pass-input');
+  const passGo = document.getElementById('ctrl-pass-go');
   hostJoinBtn.addEventListener('click', () => {
-    if (conn && conn.open) {
-      statusEl.textContent = 'Joining as host…';
-      conn.send({ type: 'claimHost', deviceId });
-      // If the game screen is running an outdated build it won't answer
-      setTimeout(() => {
-        if (!isHost && !myInfo) statusEl.textContent = 'No reply — the game screen may be running an old version. Refresh it (Ctrl+F5) and rescan.';
-      }, 4000);
-    }
+    hostPassRow.style.display = 'flex';
+    statusEl.textContent = 'Enter the host passcode:';
+    passInput.focus();
   });
+  function submitHostPass() {
+    if (!(conn && conn.open)) return;
+    statusEl.textContent = 'Checking passcode…';
+    conn.send({ type: 'claimHost', deviceId, pass: passInput.value });
+    setTimeout(() => {
+      if (!isHost && statusEl.textContent === 'Checking passcode…') {
+        statusEl.textContent = 'No reply — the game screen may be running an old version. Refresh it (Ctrl+F5) and rescan.';
+      }
+    }, 4000);
+  }
+  passGo.addEventListener('click', submitHostPass);
+  passInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitHostPass(); });
   hostPrimary.addEventListener('click', () => { if (conn && conn.open) conn.send({ type: 'admin', action: 'primary' }); });
 
   mashBtn.addEventListener('pointerdown', (e) => {
