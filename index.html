@@ -967,6 +967,7 @@
       </div>
 
       <button class="start-btn" id="start-btn">Start Adventure</button>
+      <div style="margin-top:14px; font-size:11px; color:#c5a0b8; font-weight:500;">build v7 — follow-cam · host phone · names</div>
     </div>
   </div>
 
@@ -1077,6 +1078,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // ===== Game Configuration =====
+console.log('Sweet Path build v7 (follow-cam, host phone, player names)');
+
 const COLORS = {
   red:    { hex: '#ff4d6d', three: 0xff4d6d },
   orange: { hex: '#ff9f4a', three: 0xff9f4a },
@@ -3174,7 +3177,16 @@ function initControllerMode(code) {
     }
   }
 
-  hostJoinBtn.addEventListener('click', () => { if (conn && conn.open) conn.send({ type: 'claimHost', deviceId }); });
+  hostJoinBtn.addEventListener('click', () => {
+    if (conn && conn.open) {
+      statusEl.textContent = 'Joining as host…';
+      conn.send({ type: 'claimHost', deviceId });
+      // If the game screen is running an outdated build it won't answer
+      setTimeout(() => {
+        if (!isHost && !myInfo) statusEl.textContent = 'No reply — the game screen may be running an old version. Refresh it (Ctrl+F5) and rescan.';
+      }, 4000);
+    }
+  });
   hostPrimary.addEventListener('click', () => { if (conn && conn.open) conn.send({ type: 'admin', action: 'primary' }); });
 
   mashBtn.addEventListener('pointerdown', (e) => {
