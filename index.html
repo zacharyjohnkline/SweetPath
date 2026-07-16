@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <title>Sweet Path — A Candy Adventure</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Bowlby+One+SC&display=swap');
@@ -407,7 +407,7 @@
 
   /* ===== Controller screen (on the phone) ===== */
   #controller-screen {
-    position: absolute; inset: 0;
+    position: fixed; inset: 0;
     display: none;
     flex-direction: column;
     align-items: center;
@@ -415,6 +415,12 @@
     padding: 16px;
     background: linear-gradient(135deg, #fff0f8 0%, #f0f8ff 100%);
     overflow-y: auto;
+    /* Rapid mashing must never trigger browser zoom/pan gestures */
+    touch-action: pan-y;
+    overscroll-behavior: contain;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
   #controller-screen.show { display: flex; }
 
@@ -476,6 +482,7 @@
     transition: transform 0.05s;
   }
   #ctrl-mash:active { transform: scale(0.94) translateY(6px); box-shadow: 0 3px 0 rgba(0,0,0,0.25); }
+  #ctrl-mash, .ctrl-action, .ctrl-slot-btn { touch-action: none; }
   #ctrl-mash:disabled { opacity: 0.4; }
 
   .ctrl-action {
@@ -497,6 +504,39 @@
   #ctrl-draw { background: linear-gradient(135deg, var(--c-red), var(--c-orange)); }
   #ctrl-bonus { background: linear-gradient(135deg, var(--c-purple), var(--c-blue)); display: none; }
   #ctrl-bonus.show { display: block; }
+
+  /* ===== In-game rejoin panel ===== */
+  #rejoin-panel {
+    display: none;
+    position: absolute;
+    top: 20px; right: 20px;
+    background: var(--c-cream);
+    border-radius: 16px;
+    padding: 10px 14px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.1), 0 0 0 3px white;
+    text-align: center;
+  }
+  #rejoin-qr {
+    background: white;
+    padding: 6px;
+    border-radius: 10px;
+    display: inline-block;
+  }
+  #rejoin-qr img, #rejoin-qr canvas { display: block; }
+  #rejoin-code {
+    font-family: 'Bowlby One SC', sans-serif;
+    font-size: 14px;
+    letter-spacing: 2px;
+    color: var(--c-text);
+    margin-top: 5px;
+  }
+  #rejoin-hint {
+    font-size: 10px;
+    color: #8a5a78;
+    font-weight: 500;
+    margin-top: 2px;
+    max-width: 120px;
+  }
 
   /* ===== Game UI ===== */
   #game-ui { position: absolute; inset: 0; pointer-events: none; }
@@ -987,6 +1027,13 @@
       <div class="players-title">RAINBOW BONUS</div>
       <div id="rainbow-dots"></div>
       <div id="rainbow-note">Fill the rainbow — last new color wins a bonus draw!</div>
+    </div>
+
+    <div id="rejoin-panel">
+      <div class="players-title">📱 REJOIN</div>
+      <div id="rejoin-qr"></div>
+      <div id="rejoin-code"></div>
+      <div id="rejoin-hint">Phone dropped? Scan to jump back in!</div>
     </div>
 
     <div class="help-text">Drag to rotate • Scroll to zoom</div>
@@ -2060,6 +2107,7 @@ function animate() {
 function startGame(plyrs) {
   players = plyrs;
   gameStarted = true;
+  showRejoinPanel();
   initThree();
   buildBoard();
   spawnPawns();
@@ -2689,6 +2737,7 @@ let roomCode = null;
 let gameStarted = false;
 let remotePressHandler = null; // set while a mash contest is running
 const slotConns = [null, null, null, null, null]; // one connection per player slot
+const slotOwners = [null, null, null, null, null]; // device ID that owns each character
 const allConns = new Set();
 
 function randomCode() {
@@ -2745,6 +2794,23 @@ function enablePhoneControllers() {
   });
 }
 
+function showRejoinPanel() {
+  if (!hostPeer || !roomCode) return;
+  const panel = document.getElementById('rejoin-panel');
+  panel.style.display = 'block';
+  const qrEl = document.getElementById('rejoin-qr');
+  qrEl.innerHTML = '';
+  if ((location.protocol === 'http:' || location.protocol === 'https:') && typeof QRCode !== 'undefined') {
+    new QRCode(qrEl, {
+      text: location.origin + location.pathname + '?join=' + roomCode,
+      width: 96, height: 96,
+    });
+  } else {
+    qrEl.style.display = 'none';
+  }
+  document.getElementById('rejoin-code').textContent = roomCode;
+}
+
 function slotInfo() {
   const slots = [];
   for (let i = 0; i < playerCount; i++) {
@@ -2777,13 +2843,29 @@ function handleControllerMsg(conn, msg) {
   if (msg.type === 'hello') { sendSlots(conn); return; }
   if (msg.type === 'claim') {
     const sl = msg.slot | 0;
-    if (sl >= 0 && sl < playerCount && !slotConns[sl]) {
-      slotConns[sl] = conn;
-      conn._slot = sl;
-      safeSend(conn, { type: 'claimed', ...slotInfo()[sl] });
-      sendStateTo(conn);
+    const deviceId = typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 32) : null;
+    if (sl >= 0 && sl < playerCount) {
+      const old = slotConns[sl];
+      const oldAlive = !!(old && old !== conn && old.open);
+      const sameDevice = !!(deviceId && slotOwners[sl] === deviceId);
+      // A character can be claimed if: it's free, its old connection is dead
+      // (a refreshed phone), or the SAME device that owned it is reclaiming it.
+      // A different phone can never steal a character that's still connected.
+      if (!old || !oldAlive || sameDevice) {
+        if (old && old !== conn) {
+          allConns.delete(old);
+          try { old.close(); } catch (e) {}
+        }
+        slotConns[sl] = conn;
+        slotOwners[sl] = deviceId || slotOwners[sl];
+        conn._slot = sl;
+        safeSend(conn, { type: 'claimed', ...slotInfo()[sl] });
+        sendStateTo(conn);
+      } else {
+        safeSend(conn, { type: 'denied', reason: 'That player is being used on another phone!' });
+      }
     } else {
-      safeSend(conn, { type: 'denied' });
+      safeSend(conn, { type: 'denied', reason: 'That player is not in this game.' });
     }
     updatePhoneStatus();
     broadcastSlots();
@@ -2841,6 +2923,36 @@ function initControllerMode(code) {
   let myInfo = null;
   let conn = null;
 
+  // A permanent random ID for THIS phone's browser, stored like a cookie.
+  // The host uses it to verify that a rejoining phone really owned its
+  // character, so two kids refreshing at once can't cross wires.
+  const DEVICE_KEY = 'sweetpath_device';
+  let deviceId = null;
+  try { deviceId = localStorage.getItem(DEVICE_KEY); } catch (e) {}
+  if (!deviceId) {
+    deviceId = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, '0')).join('');
+    try { localStorage.setItem(DEVICE_KEY, deviceId); } catch (e) {}
+  }
+
+  // Remember which character this phone claimed so a refresh rejoins automatically
+  const SAVE_KEY = 'sweetpath_ctrl';
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
+  let autoClaimSlot = (saved && saved.code === code.toUpperCase() && Number.isInteger(saved.slot))
+    ? saved.slot : null;
+
+  // Belt-and-suspenders zoom guards: some browsers ignore parts of the
+  // viewport meta, so block pinch and double-tap zoom at the event level too.
+  document.addEventListener('gesturestart', (e) => e.preventDefault());
+  document.addEventListener('gesturechange', (e) => e.preventDefault());
+  document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTouchEnd < 350) e.preventDefault(); // swallow double-taps
+    lastTouchEnd = now;
+  }, { passive: false });
+
   mashBtn.disabled = true;
   drawBtn.disabled = true;
 
@@ -2868,18 +2980,28 @@ function initControllerMode(code) {
   function onMsg(msg) {
     if (!msg || typeof msg !== 'object') return;
     if (msg.type === 'slots' && !myInfo) {
+      // If this phone refreshed mid-game, reclaim its old player automatically
+      if (autoClaimSlot !== null) {
+        const mine = msg.slots.find(sl => sl.slot === autoClaimSlot);
+        autoClaimSlot = null; // only try once
+        if (mine) {
+          statusEl.textContent = `Rejoining as ${mine.name}…`;
+          conn.send({ type: 'claim', slot: mine.slot, deviceId });
+          return;
+        }
+      }
       slotsEl.innerHTML = '';
       msg.slots.forEach(sl => {
         const b = document.createElement('button');
         b.className = 'ctrl-slot-btn';
         b.style.background = sl.colorHex;
-        b.textContent = sl.taken ? `${sl.name} (taken)` : sl.name;
-        b.disabled = sl.taken;
-        b.onclick = () => conn.send({ type: 'claim', slot: sl.slot });
+        b.textContent = sl.taken ? `${sl.name} (rejoin)` : sl.name;
+        b.onclick = () => conn.send({ type: 'claim', slot: sl.slot, deviceId });
         slotsEl.appendChild(b);
       });
     } else if (msg.type === 'claimed') {
       myInfo = msg;
+      try { localStorage.setItem(SAVE_KEY, JSON.stringify({ code: code.toUpperCase(), slot: msg.slot })); } catch (e) {}
       slotsEl.style.display = 'none';
       padEl.classList.add('show');
       const header = document.getElementById('ctrl-header');
@@ -2888,7 +3010,8 @@ function initControllerMode(code) {
       mashBtn.style.background = `linear-gradient(160deg, ${msg.colorHex}, ${msg.colorHex}cc)`;
       statusEl.textContent = `You're ${msg.name}! Waiting for the game…`;
     } else if (msg.type === 'denied') {
-      statusEl.textContent = 'That player was just taken — pick another!';
+      statusEl.textContent = (msg.reason || 'Could not claim that player') + ' Pick one below!';
+      conn.send({ type: 'hello' });
     } else if (msg.type === 'state' && myInfo) {
       mashBtn.disabled = !msg.mashActive;
       drawBtn.disabled = !msg.canDraw;
