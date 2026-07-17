@@ -971,7 +971,7 @@
       </div>
 
       <button class="start-btn" id="start-btn">Start Adventure</button>
-      <div style="margin-top:14px; font-size:11px; color:#c5a0b8; font-weight:500;">build v11 — auto-room · restart · compact</div>
+      <div style="margin-top:14px; font-size:11px; color:#c5a0b8; font-weight:500;">build v12 — instant rematch</div>
     </div>
   </div>
 
@@ -1025,7 +1025,7 @@
       <button id="ctrl-draw" class="ctrl-action">🃏 Draw Card</button>
       <button id="ctrl-bonus" class="ctrl-action">🎁 Bonus Draw</button>
     </div>
-    <div style="margin-top:auto; padding-top:10px; font-size:11px; color:#c5a0b8; font-weight:500;">build v11</div>
+    <div style="margin-top:auto; padding-top:10px; font-size:11px; color:#c5a0b8; font-weight:500;">build v12</div>
   </div>
 
   <div id="game-ui" style="display:none;">
@@ -1069,7 +1069,7 @@
       <div class="crown">👑</div>
       <div class="winner-name" id="winner-name">Winner!</div>
       <div class="win-subtitle">reached the Sugar Castle first!</div>
-      <button class="start-btn" onclick="location.reload()">Play Again</button>
+      <button class="start-btn" id="play-again-btn">Play Again</button>
     </div>
   </div>
 </div>
@@ -1090,7 +1090,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // ===== Game Configuration =====
-console.log('Sweet Path build v11 (persistent room, host restart, compact setup)');
+console.log('Sweet Path build v12 (instant in-memory rematch)');
 
 const COLORS = {
   red:    { hex: '#ff4d6d', three: 0xff4d6d },
@@ -1131,6 +1131,10 @@ const TOTAL_SPACES = 64; // including start (0) and castle (63)
 
 // ===== Setup screen =====
 let playerCount = 3;
+let rosterPlayers = null; // the created players, kept across rematches
+let contestGen = 0;       // invalidates stale mash/duel timers after a restart
+let gameGen = 0;          // invalidates stale turn callbacks after a restart
+let engineReady = false;  // three.js scene initialized once
 const setupScreen = document.getElementById('setup-screen');
 const playerInputs = document.getElementById('player-inputs');
 const pcBtns = document.querySelectorAll('.pc-btn');
@@ -1175,6 +1179,7 @@ document.getElementById('start-btn').addEventListener('click', () => {
       bonusDraws: 0,
     });
   }
+  rosterPlayers = players;
   setupScreen.style.display = 'none';
   showMashScreen(players);
 });
@@ -1188,6 +1193,7 @@ const MASH_KEYS = ['A', 'F', 'J', 'L', 'B'];
 const MASH_DURATION_MS = 3000;
 
 function showMashScreen(pendingPlayers) {
+  const gen = ++contestGen; // a rematch invalidates this contest's timers
   const screen = document.getElementById('mash-screen');
   const padsEl = document.getElementById('mash-pads');
   const countdownEl = document.getElementById('mash-countdown');
@@ -1246,6 +1252,7 @@ function showMashScreen(pendingPlayers) {
     countdownEl.classList.remove('go');
     countdownEl.textContent = n;
     countdownTimer = setInterval(() => {
+      if (gen !== contestGen) { clearInterval(countdownTimer); return; }
       n--;
       if (n > 0) {
         countdownEl.textContent = n;
@@ -1257,10 +1264,12 @@ function showMashScreen(pendingPlayers) {
   }
 
   function beginMash() {
+    if (gen !== contestGen) return;
     mashing = true;
     countdownEl.classList.add('go');
     const start = performance.now();
     tickTimer = setInterval(() => {
+      if (gen !== contestGen) { clearInterval(tickTimer); return; }
       const remaining = Math.max(0, MASH_DURATION_MS - (performance.now() - start));
       countdownEl.textContent = `MASH! ${(remaining / 1000).toFixed(1)}s`;
     }, 50);
@@ -1268,6 +1277,7 @@ function showMashScreen(pendingPlayers) {
   }
 
   function finishMash() {
+    if (gen !== contestGen) { window.removeEventListener('keydown', onKeyDown); return; }
     mashing = false;
     clearInterval(tickTimer);
     window.removeEventListener('keydown', onKeyDown);
@@ -2157,9 +2167,18 @@ function animate() {
 function startGame(plyrs) {
   players = plyrs;
   gameStarted = true;
+  currentPlayerIdx = 0;
+  canDraw = true;
+  bonusDrawPending = false;
   showRejoinPanel();
-  initThree();
-  buildBoard();
+  if (!engineReady) {
+    initThree();
+    buildBoard();
+  } else {
+    // Rematch: clear the old pawns off the board
+    pawns.forEach(pw => scene.remove(pw));
+    pawns = [];
+  }
   spawnPawns();
   // Size the follow camera so roughly 3 tiles ahead and 3 behind are in view
   const tileSpacing = pathPoints[1].distanceTo(pathPoints[2]);
@@ -2168,15 +2187,66 @@ function startGame(plyrs) {
   deck = document.getElementById('deck');
   drawnCardEl = document.getElementById('drawn-card');
   cardMessage = document.getElementById('card-message');
+  deck.classList.remove('disabled');
+  drawnCardEl.classList.remove('show');
+  cardMessage.classList.remove('show');
 
-  deck.addEventListener('click', drawCard);
-  document.getElementById('bonus-draw-btn').addEventListener('click', useBonusDraw);
+  if (!engineReady) {
+    deck.addEventListener('click', drawCard);
+    document.getElementById('bonus-draw-btn').addEventListener('click', useBonusDraw);
+  }
   initRainbowPanel();
+  updateRainbowDots();
 
   updatePlayerPanel();
   updateTopBar();
   updateBonusButton();
-  animate();
+  if (!engineReady) {
+    engineReady = true;
+    animate();
+  }
+}
+
+// ===== Rematch =====
+// Resets everything in memory and jumps straight back to the button-mash
+// screen with the SAME players, names, and count — no reload, so no phone
+// ever disconnects and the host stays seated.
+function rematch() {
+  if (!rosterPlayers) { location.reload(); return; }
+  gameGen++;    // stale turn callbacks from the old game become no-ops
+  contestGen++; // stale mash/duel timers become no-ops
+
+  document.getElementById('win-screen').classList.remove('show');
+  document.getElementById('duel-screen').classList.remove('show');
+  document.getElementById('game-ui').style.display = 'none';
+
+  rosterPlayers.forEach(pl => {
+    pl.position = 0;
+    pl.skipNext = false;
+    pl.finished = false;
+    pl.bonusDraws = 0;
+  });
+  rainbowCollected.clear();
+  clearTimeout(rainbowNoteTimer);
+  bonusDrawPending = false;
+  remotePressHandler = null;
+  canDraw = true;
+  currentPlayerIdx = 0;
+  if (drawnCardEl) drawnCardEl.classList.remove('show');
+  if (cardMessage) cardMessage.classList.remove('show');
+
+  // Reset the mash screen from its previous "results" state
+  const resultsEl = document.getElementById('mash-results');
+  resultsEl.classList.remove('show');
+  resultsEl.innerHTML = '';
+  document.getElementById('mash-pads').style.display = '';
+  document.getElementById('mash-sub').textContent = 'Rematch! Mash your key (or tap your pad) for 3 seconds. Most presses goes first, fewest goes last!';
+  const cd = document.getElementById('mash-countdown');
+  cd.classList.remove('go');
+  cd.textContent = 'Ready?';
+
+  // Same crew, back in slot order for a fair fresh mash
+  showMashScreen([...rosterPlayers].sort((a, b) => a.slot - b.slot));
 }
 
 // ===== Rainbow bonus tracker =====
@@ -2279,6 +2349,7 @@ function checkCollisionThenEndTurn() {
 }
 
 function startDuel(contenders, space) {
+  const gen = ++contestGen; // a rematch invalidates this duel's timers
   // The duel decides who goes next, superseding any pending bonus follow-up
   bonusDrawPending = false;
   drawnCardEl.classList.remove('show');
@@ -2348,6 +2419,7 @@ function startDuel(contenders, space) {
     let n = 3;
     countdownEl.textContent = n;
     const cd = setInterval(() => {
+      if (gen !== contestGen) { clearInterval(cd); return; }
       n--;
       if (n > 0) {
         countdownEl.textContent = n;
@@ -2359,10 +2431,12 @@ function startDuel(contenders, space) {
   }
 
   function beginMash() {
+    if (gen !== contestGen) return;
     mashing = true;
     countdownEl.classList.add('go');
     const start = performance.now();
     tickTimer = setInterval(() => {
+      if (gen !== contestGen) { clearInterval(tickTimer); return; }
       const remaining = Math.max(0, MASH_DURATION_MS - (performance.now() - start));
       countdownEl.textContent = `MASH! ${(remaining / 1000).toFixed(1)}s`;
     }, 50);
@@ -2370,6 +2444,7 @@ function startDuel(contenders, space) {
   }
 
   function finishDuel() {
+    if (gen !== contestGen) { window.removeEventListener('keydown', onKeyDown); return; }
     mashing = false;
     clearInterval(tickTimer);
     window.removeEventListener('keydown', onKeyDown);
@@ -2484,6 +2559,7 @@ function drawCard() {
     card = { type: 'single', color };
   }
 
+  const gen = gameGen; // a rematch makes this draw's pending steps no-ops
   renderCard(card);
 
   // Track colors for the rainbow bonus (special cards don't count)
@@ -2497,7 +2573,7 @@ function drawCard() {
   updateBonusButton();
 
   // Special cards linger longer so everyone can soak in the reveal
-  setTimeout(() => resolveCard(card), card.type === 'special' ? 2400 : 1100);
+  setTimeout(() => { if (gen === gameGen) resolveCard(card); }, card.type === 'special' ? 2400 : 1100);
 }
 
 function renderCard(card) {
@@ -2536,13 +2612,14 @@ function renderCard(card) {
 }
 
 function resolveCard(card) {
+  const gen = gameGen; // stale after a rematch
   const player = players[currentPlayerIdx];
 
   // Skip-turn check first
   if (player.skipNext) {
     player.skipNext = false;
     showMessage(`${player.name} is stuck and skips this turn! 🍯`);
-    setTimeout(() => endTurn(), 1500);
+    setTimeout(() => { if (gen === gameGen) endTurn(); }, 1500);
     return;
   }
 
@@ -2571,6 +2648,7 @@ function resolveCard(card) {
   }
 
   movePlayer(currentPlayerIdx, target, () => {
+    if (gen !== gameGen) return; // the game was restarted mid-move
     // After arrival
     if (target === TOTAL_SPACES - 1) {
       player.finished = true;
@@ -2585,6 +2663,7 @@ function resolveCard(card) {
       updatePlayerPanel();
       setTimeout(() => {
         movePlayerArc(currentPlayerIdx, SHORTCUT.to, () => {
+          if (gen !== gameGen) return;
           player.position = SHORTCUT.to;
           updatePlayerPanel();
           if (STICKY_SPOTS.includes(SHORTCUT.to)) {
@@ -2593,7 +2672,7 @@ function resolveCard(card) {
           } else {
             showMessage(`${player.name} crossed the bridge to space ${SHORTCUT.to}!`);
           }
-          setTimeout(() => checkCollisionThenEndTurn(), 1600);
+          setTimeout(() => { if (gen === gameGen) checkCollisionThenEndTurn(); }, 1600);
         });
       }, 900);
       return;
@@ -2609,7 +2688,7 @@ function resolveCard(card) {
       showMessage(`${player.name} moves to space ${target}.`);
     }
     updatePlayerPanel();
-    setTimeout(() => checkCollisionThenEndTurn(), 1600);
+    setTimeout(() => { if (gen === gameGen) checkCollisionThenEndTurn(); }, 1600);
   });
 }
 
@@ -2989,9 +3068,8 @@ function handleControllerMsg(conn, msg) {
       const target = document.querySelector(`.pc-btn[data-count="${msg.count | 0}"]`);
       if (target) target.click();
     } else if (msg.action === 'restart') {
-      // Reload the big screen — the room code persists, phones auto-reconnect
-      location.reload();
-      return;
+      // In-memory rematch: same players and names, straight to the mash screen
+      rematch();
     }
     broadcastHostState();
     return;
@@ -3062,6 +3140,7 @@ function broadcastState() {
   broadcastHostState();
 }
 
+document.getElementById('play-again-btn').addEventListener('click', rematch);
 document.getElementById('join-link').addEventListener('click', (e) => {
   e.preventDefault();
   document.getElementById('join-form').style.display = 'inline';
