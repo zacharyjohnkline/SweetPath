@@ -561,6 +561,73 @@
   #ctrl-bonus { background: linear-gradient(135deg, var(--c-purple), var(--c-blue)); display: none; }
   #ctrl-bonus.show { display: block; }
 
+  /* ===== Phone mini-game overlays ===== */
+  #mg-screen, #wheel-screen {
+    position: fixed; inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 500;
+    background: #1a0f2e;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    padding: 12px;
+    gap: 12px;
+  }
+  #mg-screen.show, #wheel-screen.show { display: flex; }
+  #mg-title, #wheel-title {
+    font-family: 'Bowlby One SC', sans-serif;
+    font-size: 26px;
+    color: white;
+    text-shadow: 0 2px 8px rgba(255,120,200,0.6);
+    text-align: center;
+  }
+  #mg-canvas {
+    background: #0d0620;
+    border-radius: 16px;
+    box-shadow: 0 0 0 3px rgba(255,255,255,0.15), 0 8px 30px rgba(0,0,0,0.5);
+    touch-action: none;
+    max-width: 100%;
+  }
+  #mg-msg {
+    color: white;
+    font-weight: 700;
+    font-size: 17px;
+    min-height: 24px;
+    text-align: center;
+  }
+  #mg-tron-controls {
+    display: none;
+    gap: 14px;
+    width: 100%;
+    max-width: 380px;
+  }
+  #mg-tron-controls.show { display: flex; }
+  .mg-turn-btn {
+    flex: 1;
+    border: none;
+    border-radius: 18px;
+    padding: 22px 10px;
+    font-family: 'Bowlby One SC', sans-serif;
+    font-size: 18px;
+    color: white;
+    background: linear-gradient(135deg, #4dabf7, #b380ff);
+    box-shadow: 0 5px 0 rgba(0,0,0,0.35);
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mg-turn-btn:active { transform: translateY(4px); box-shadow: 0 1px 0 rgba(0,0,0,0.35); }
+  #wheel-canvas { border-radius: 50%; box-shadow: 0 0 40px rgba(255,217,61,0.4); }
+  #wheel-result {
+    color: var(--c-yellow);
+    font-family: 'Bowlby One SC', sans-serif;
+    font-size: 20px;
+    min-height: 28px;
+    text-align: center;
+  }
+
   /* ===== In-game rejoin panel ===== */
   #rejoin-panel {
     display: none;
@@ -1016,7 +1083,7 @@
       </div>
 
       <button class="start-btn" id="start-btn">Start Adventure</button>
-      <div style="margin-top:14px; font-size:11px; color:#c5a0b8; font-weight:500;">build v15 — unlimited players · fresh colors</div>
+      <div style="margin-top:14px; font-size:11px; color:#c5a0b8; font-weight:500;">build v16 — arcade update</div>
     </div>
   </div>
 
@@ -1076,7 +1143,24 @@
       <button id="ctrl-draw" class="ctrl-action">🃏 Draw Card</button>
       <button id="ctrl-bonus" class="ctrl-action">🎁 Bonus Draw</button>
     </div>
-    <div style="margin-top:auto; padding-top:10px; font-size:11px; color:#c5a0b8; font-weight:500;">build v15</div>
+    <div style="margin-top:auto; padding-top:10px; font-size:11px; color:#c5a0b8; font-weight:500;">build v16</div>
+  </div>
+
+  <div id="mg-screen">
+    <div id="mg-title"></div>
+    <canvas id="mg-canvas"></canvas>
+    <div id="mg-msg"></div>
+    <div id="mg-tron-controls">
+      <button class="mg-turn-btn" id="mg-left">⮌ TURN</button>
+      <button class="mg-turn-btn" id="mg-right">TURN ⮎</button>
+    </div>
+  </div>
+
+  <div id="wheel-screen">
+    <div id="wheel-title">🎡 Wheel of Fortune!</div>
+    <canvas id="wheel-canvas" width="300" height="300"></canvas>
+    <button id="wheel-spin-btn" class="start-btn">SPIN!</button>
+    <div id="wheel-result"></div>
   </div>
 
   <div id="game-ui" style="display:none;">
@@ -1141,7 +1225,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // ===== Game Configuration =====
-console.log('Sweet Path build v15 (unlimited players, auto colors, no character lock-in)');
+console.log('Sweet Path build v16 (Pong/Tron collisions, Doodle Dash rounds, Wheel of Fortune, backward-special bonus)');
 
 const COLORS = {
   red:    { hex: '#ff4d6d', three: 0xff4d6d },
@@ -1251,6 +1335,11 @@ function beginRound() {
   }
   gameGen++;
   contestGen++;
+  mgSession++;
+  mgInputHandler = null;
+  groupGame = null;
+  wheelPending = null;
+  roundTurnCounter = 0;
   gameStarted = true;
   rosterPlayers.forEach(pl => {
     pl.position = 0;
@@ -2312,6 +2401,10 @@ function startGame(plyrs) {
 function rematch() {
   gameGen++;    // stale turn callbacks from the old game become no-ops
   contestGen++; // stale mash/duel timers become no-ops
+  mgSession++;
+  mgInputHandler = null;
+  groupGame = null;
+  wheelPending = null;
   gameStarted = false;
 
   document.getElementById('win-screen').classList.remove('show');
@@ -2412,212 +2505,332 @@ function useBonusDraw() {
   drawCard();
 }
 
-// ===== Landing showdown duel =====
-// When a player's move ends on a space occupied by another player, everyone
-// on that space has a 3-second button-mash duel. The winner seizes the turn:
-// it immediately becomes their turn, and the normal order continues from them.
+// ===== Collision mini-games (Pong & Tron) =====
+// When a player's move ends on a space occupied by another player, the
+// players on that space battle in a mini-game played ON THEIR PHONES:
+// Pong for two players, Tron light-cycles for two or more. The winner earns
+// a BONUS DRAW — the turn order continues unchanged.
+let mgSession = 0;        // invalidates a running mini-game's timers
+let mgInputHandler = null; // routes phone mgInput messages to the active game
+
 function checkCollisionThenEndTurn() {
   const mover = players[currentPlayerIdx];
   const pos = mover.position;
-  // No duels at the start space or the castle
   if (pos > 0 && pos < TOTAL_SPACES - 1) {
-    const contenders = players
-      .map((p, i) => ({ p, i }))
-      .filter(e => !e.p.finished && e.p.position === pos);
-    if (contenders.length > 1) {
-      startDuel(contenders, pos);
+    const group = players.filter(pl => !pl.finished && pl.position === pos);
+    if (group.length > 1) {
+      startCollisionMinigame(group, pos);
       return;
     }
   }
   endTurn();
 }
 
-function startDuel(contenders, space) {
-  const gen = ++contestGen; // a rematch invalidates this duel's timers
-  // The duel decides who goes next, superseding any pending bonus follow-up
+function connectedOf(list) {
+  return list.filter(pl => {
+    const c = connsBySlot.get(pl.slot);
+    return c && c.open;
+  });
+}
+
+// The big screen shows a spectator overlay (reusing the old duel screen)
+function showMgOverlay(title, subText, statusText) {
+  const screen = document.getElementById('duel-screen');
+  document.querySelector('#duel-screen h2').textContent = title;
+  document.getElementById('duel-sub').textContent = subText;
+  const cd = document.getElementById('duel-countdown');
+  cd.classList.remove('go');
+  cd.textContent = statusText || '';
+  document.getElementById('duel-pads').innerHTML = '';
+  document.getElementById('duel-pads').style.display = 'none';
+  const res = document.getElementById('duel-results');
+  res.innerHTML = '';
+  res.classList.remove('show');
+  document.getElementById('duel-action-btn').style.display = 'none';
+  screen.classList.add('show');
+  broadcastHostState();
+}
+function updateMgStatus(text) { document.getElementById('duel-countdown').textContent = text; }
+function hideMgOverlay() { document.getElementById('duel-screen').classList.remove('show'); }
+
+function startCollisionMinigame(group, space) {
   bonusDrawPending = false;
   drawnCardEl.classList.remove('show');
   cardMessage.classList.remove('show');
-
-  const screen = document.getElementById('duel-screen');
-  const padsEl = document.getElementById('duel-pads');
-  const countdownEl = document.getElementById('duel-countdown');
-  const subEl = document.getElementById('duel-sub');
-  const actionBtn = document.getElementById('duel-action-btn');
-  const resultsEl = document.getElementById('duel-results');
-
-  const names = contenders.map(e => e.p.name);
-  const nameList = names.length === 2
-    ? `${names[0]} and ${names[1]}`
-    : names.slice(0, -1).join(', ') + ', and ' + names[names.length - 1];
-  subEl.textContent = `${nameList} collided on space ${space}! Mash your button — the winner steals the turn!`;
-  countdownEl.classList.remove('go');
-  countdownEl.textContent = 'Ready?';
-  resultsEl.innerHTML = '';
-  resultsEl.classList.remove('show');
-  padsEl.style.display = '';
-  padsEl.innerHTML = '';
-
-  const counts = new Array(contenders.length).fill(0);
-  let mashing = false;
-  let tickTimer = null;
-
-  const padEls = contenders.map((e, idx) => {
-    const pad = document.createElement('button');
-    pad.className = 'mash-pad';
-    pad.style.background = `linear-gradient(160deg, ${e.p.color.hex}, ${e.p.color.hex}cc)`;
-    pad.innerHTML = `
-      <div class="mp-name">${escapeHtml(e.p.name)}</div>
-      <div class="mp-key">${e.p.key || '📱'}</div>
-      <div class="mp-count">0</div>
-    `;
-    pad.addEventListener('pointerdown', (ev) => {
-      ev.preventDefault();
-      registerPress(idx);
-    });
-    padsEl.appendChild(pad);
-    return pad;
-  });
-
-  function registerPress(idx) {
-    if (!mashing) return;
-    counts[idx]++;
-    padEls[idx].querySelector('.mp-count').textContent = counts[idx];
-    padEls[idx].classList.add('hit');
-    setTimeout(() => padEls[idx].classList.remove('hit'), 60);
-  }
-
-  function onKeyDown(ev) {
-    if (ev.repeat) return;
-    const idx = contenders.findIndex(e => e.p.key === ev.key.toUpperCase());
-    if (idx !== -1) {
-      ev.preventDefault();
-      registerPress(idx);
-    }
-  }
-  window.addEventListener('keydown', onKeyDown);
-
-  function startCountdown() {
-    actionBtn.style.display = 'none';
-    broadcastHostState();
-    let n = 3;
-    countdownEl.textContent = n;
-    const cd = setInterval(() => {
-      if (gen !== contestGen) { clearInterval(cd); return; }
-      n--;
-      if (n > 0) {
-        countdownEl.textContent = n;
-      } else {
-        clearInterval(cd);
-        beginMash();
-      }
-    }, 800);
-  }
-
-  function beginMash() {
-    if (gen !== contestGen) return;
-    mashing = true;
-    countdownEl.classList.add('go');
-    const start = performance.now();
-    tickTimer = setInterval(() => {
-      if (gen !== contestGen) { clearInterval(tickTimer); return; }
-      const remaining = Math.max(0, MASH_DURATION_MS - (performance.now() - start));
-      countdownEl.textContent = `MASH! ${(remaining / 1000).toFixed(1)}s`;
-    }, 50);
-    setTimeout(finishDuel, MASH_DURATION_MS);
-  }
-
-  function finishDuel() {
-    if (gen !== contestGen) { window.removeEventListener('keydown', onKeyDown); return; }
-    mashing = false;
-    clearInterval(tickTimer);
-    window.removeEventListener('keydown', onKeyDown);
-    remotePressHandler = null;
-    broadcastState();
-    countdownEl.classList.remove('go');
-    countdownEl.textContent = 'Time!';
-
-    const ranked = contenders
-      .map((e, idx) => ({ ...e, presses: counts[idx], tiebreak: Math.random() }))
-      .sort((a, b) => b.presses - a.presses || a.tiebreak - b.tiebreak);
-    const winner = ranked[0];
-
-    resultsEl.innerHTML = '';
-    ranked.forEach((entry, i) => {
-      const row = document.createElement('div');
-      row.className = 'mash-result-row';
-      row.innerHTML = `
-        <div class="mr-place">${i === 0 ? '🏆' : '—'}</div>
-        <div class="mr-token" style="background:${entry.p.color.hex};"></div>
-        <div class="mr-name">${escapeHtml(entry.p.name)}</div>
-        <div class="mr-count">${entry.presses} press${entry.presses === 1 ? '' : 'es'}</div>
-      `;
-      resultsEl.appendChild(row);
-    });
-    padsEl.style.display = 'none';
-    resultsEl.classList.add('show');
-    subEl.textContent = `${winner.p.name} wins the showdown and steals the turn!`;
-
-    actionBtn.textContent = `${winner.p.name}'s Turn!`;
-    actionBtn.style.display = '';
-    actionBtn.onclick = () => {
-      screen.classList.remove('show');
-      // The winner seizes the turn; order continues from them as normal
-      currentPlayerIdx = winner.i;
-      canDraw = true;
-      deck.classList.remove('disabled');
+  const parts = connectedOf(group);
+  if (parts.length < 2) { endTurn(); return; } // need phones to play
+  const kind = (parts.length === 2 && Math.random() < 0.5) ? 'pong' : 'tron';
+  const names = parts.map(pl => pl.name).join(' vs ');
+  showMgOverlay(
+    kind === 'pong' ? '\U0001F3D3 PONG!' : '\U0001F3CD TRON!',
+    `Collision on space ${space}! ${names} \u2014 play on your phones! Winner gets a Bonus Draw \U0001F381`,
+    'Get ready\u2026'
+  );
+  const done = (winner) => {
+    if (winner) {
+      winner.bonusDraws++;
       updatePlayerPanel();
-      updateTopBar();
-      updateBonusButton();
-    };
-    broadcastHostState();
-  }
-
-  actionBtn.textContent = 'Mash!';
-  actionBtn.style.display = '';
-  actionBtn.onclick = startCountdown;
-  screen.classList.add('show');
-
-  // Route phone-controller presses into this duel
-  remotePressHandler = (slot) => {
-    const idx = contenders.findIndex(e => e.p.slot === slot);
-    if (idx !== -1) registerPress(idx);
+      updateMgStatus(`\U0001F3C6 ${winner.name} wins +1 Bonus Draw!`);
+    } else {
+      updateMgStatus('No contest \u2014 moving on!');
+    }
+    broadcastState();
+    const gen = gameGen;
+    setTimeout(() => { if (gen === gameGen) { hideMgOverlay(); endTurn(); } }, 2400);
   };
-  broadcastState();
+  if (kind === 'pong') runPong(parts.slice(0, 2), done);
+  else runTron(parts, done);
 }
 
-function updatePlayerPanel() {
-  const list = document.getElementById('players-list');
-  list.innerHTML = '';
-  players.forEach((p, i) => {
-    const row = document.createElement('div');
-    row.className = 'player-status' + (i === currentPlayerIdx ? ' current' : '');
-    const posLabel = p.finished ? '🏰 WON!' : p.position === 0 ? 'at start' : `space ${p.position}`;
-    const bonusBadge = p.bonusDraws > 0 ? `<div class="ps-bonus">🎁×${p.bonusDraws}</div>` : '';
-    row.innerHTML = `
-      <div class="ps-token" style="background:${p.color.hex};"></div>
-      <div class="ps-name">${escapeHtml(p.name)}</div>
-      ${bonusBadge}
-      <div class="ps-pos">${posLabel}</div>
-    `;
-    list.appendChild(row);
+// --- PONG: big screen simulates, phones render + send paddle position ---
+function runPong(pair, done) {
+  const gen = gameGen, sess = ++mgSession;
+  const W = 100, H = 60, PH = 16, PX = [4, 96], WIN = 3;
+  const py = [H / 2, H / 2], score = [0, 0];
+  let bx = W / 2, by = H / 2;
+  let bvx = (Math.random() < 0.5 ? 1 : -1) * 1.15, bvy = (Math.random() - 0.5) * 1.2;
+  pair.forEach((pl, i) => safeSend(connsBySlot.get(pl.slot), {
+    type: 'mgStart', kind: 'pong', side: i,
+    names: pair.map(pp => pp.name), colors: pair.map(pp => pp.color.hex),
+  }));
+  mgInputHandler = (slot, msg) => {
+    const i = pair.findIndex(pp => pp.slot === slot);
+    if (i > -1 && typeof msg.y === 'number') {
+      py[i] = Math.max(PH / 2, Math.min(H - PH / 2, msg.y * H));
+    }
+  };
+  const finish = (winner) => {
+    clearInterval(tick); clearTimeout(guard);
+    mgInputHandler = null;
+    pair.forEach(pl => safeSend(connsBySlot.get(pl.slot), { type: 'mgEnd', winner: winner.name, you: pl === winner }));
+    done(winner);
+  };
+  const tick = setInterval(() => {
+    if (gen !== gameGen || sess !== mgSession) { clearInterval(tick); mgInputHandler = null; return; }
+    bx += bvx; by += bvy;
+    if (by < 1) { by = 1; bvy = Math.abs(bvy); }
+    if (by > H - 1) { by = H - 1; bvy = -Math.abs(bvy); }
+    for (let i = 0; i < 2; i++) {
+      if (Math.abs(bx - PX[i]) < 2.2 && Math.abs(by - py[i]) < PH / 2 + 1.5 &&
+          ((i === 0 && bvx < 0) || (i === 1 && bvx > 0))) {
+        bvx = -bvx * 1.06;
+        bvy += (by - py[i]) * 0.09;
+        bvy = Math.max(-2.2, Math.min(2.2, bvy));
+      }
+    }
+    if (bx < -2 || bx > W + 2) {
+      const scorer = bx < 0 ? 1 : 0;
+      score[scorer]++;
+      updateMgStatus(`${pair[0].name} ${score[0]} \u2014 ${score[1]} ${pair[1].name}`);
+      if (score[scorer] >= WIN) { finish(pair[scorer]); return; }
+      bx = W / 2; by = H / 2;
+      bvx = (scorer === 0 ? 1 : -1) * 1.15;
+      bvy = (Math.random() - 0.5) * 1.2;
+    }
+    const frame = { type: 'mgState', b: [+bx.toFixed(1), +by.toFixed(1)], p: [+py[0].toFixed(1), +py[1].toFixed(1)], s: score };
+    pair.forEach(pl => safeSend(connsBySlot.get(pl.slot), frame));
+  }, 33);
+  const guard = setTimeout(() => {
+    if (gen !== gameGen || sess !== mgSession) return;
+    finish(score[0] === score[1] ? pair[Math.floor(Math.random() * 2)] : pair[score[0] > score[1] ? 0 : 1]);
+  }, 90000);
+}
+
+// --- TRON: big screen simulates a grid; phones render + send L/R turns ---
+function runTron(group, done) {
+  const gen = gameGen, sess = ++mgSession;
+  const N = 34;
+  const DIRS = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // up right down left
+  const startDefs = [
+    { x: 5, y: 5, d: 1 }, { x: N - 6, y: N - 6, d: 3 },
+    { x: N - 6, y: 5, d: 2 }, { x: 5, y: N - 6, d: 0 },
+    { x: Math.floor(N / 2), y: 3, d: 2 }, { x: Math.floor(N / 2), y: N - 4, d: 0 },
+    { x: 3, y: Math.floor(N / 2), d: 1 }, { x: N - 4, y: Math.floor(N / 2), d: 3 },
+  ];
+  const parts = group.slice(0, 8);
+  const heads = parts.map((_, i) => [startDefs[i].x, startDefs[i].y]);
+  const dirs = parts.map((_, i) => startDefs[i].d);
+  const alive = parts.map(() => true);
+  const pending = parts.map(() => null);
+  const trail = new Set(heads.map(h => h[0] + ',' + h[1]));
+  parts.forEach((pl, i) => safeSend(connsBySlot.get(pl.slot), {
+    type: 'mgStart', kind: 'tron', idx: i, grid: N,
+    heads: heads.map(h => [...h]), dirs: [...dirs],
+    names: parts.map(pp => pp.name), colors: parts.map(pp => pp.color.hex),
+  }));
+  mgInputHandler = (slot, msg) => {
+    const i = parts.findIndex(pp => pp.slot === slot);
+    if (i > -1 && (msg.turn === 'L' || msg.turn === 'R')) pending[i] = msg.turn;
+  };
+  const finish = (winner) => {
+    clearInterval(tick); clearTimeout(guard);
+    mgInputHandler = null;
+    parts.forEach(pl => safeSend(connsBySlot.get(pl.slot), { type: 'mgEnd', winner: winner ? winner.name : null, you: pl === winner }));
+    done(winner);
+  };
+  const tick = setInterval(() => {
+    if (gen !== gameGen || sess !== mgSession) { clearInterval(tick); mgInputHandler = null; return; }
+    // apply turns, compute next heads
+    const next = [];
+    for (let i = 0; i < parts.length; i++) {
+      if (!alive[i]) { next.push(null); continue; }
+      if (pending[i]) {
+        dirs[i] = (dirs[i] + (pending[i] === 'R' ? 1 : 3)) % 4;
+        pending[i] = null;
+      }
+      next.push([heads[i][0] + DIRS[dirs[i]][0], heads[i][1] + DIRS[dirs[i]][1]]);
+    }
+    // deaths: walls, trails, and head-on collisions (same target cell)
+    for (let i = 0; i < parts.length; i++) {
+      if (!alive[i]) continue;
+      const [x, y] = next[i];
+      let dead = x < 0 || y < 0 || x >= N || y >= N || trail.has(x + ',' + y);
+      if (!dead) for (let j = 0; j < parts.length; j++) {
+        if (j !== i && alive[j] && next[j] && next[j][0] === x && next[j][1] === y) dead = true;
+      }
+      if (dead) alive[i] = false;
+      else { heads[i] = next[i]; trail.add(x + ',' + y); }
+    }
+    const frame = { type: 'mgState', heads: heads.map((h, i) => alive[i] ? [...h] : null), alive: [...alive] };
+    parts.forEach(pl => safeSend(connsBySlot.get(pl.slot), frame));
+    const living = parts.filter((_, i) => alive[i]);
+    updateMgStatus(living.length > 1 ? `${living.length} riders left\u2026` : '');
+    if (living.length <= 1) finish(living[0] || parts[Math.floor(Math.random() * parts.length)]);
+  }, 130);
+  const guard = setTimeout(() => {
+    if (gen !== gameGen || sess !== mgSession) return;
+    const living = parts.filter((_, i) => alive[i]);
+    finish(living.length ? living[Math.floor(Math.random() * living.length)] : parts[0]);
+  }, 60000);
+}
+
+// ===== Round-end group mini-game: Doodle Dash + Wheel of Fortune =====
+// After every full round of turns, all connected players race a doodle-jump
+// climb on their phones. First to the finish line (or highest when time's up)
+// wins a spin of the wheel.
+let roundTurnCounter = 0;
+let groupGame = null; // { sess, prog: Map(slot->0..1), parts, end(pl) }
+
+const WHEEL_SEGMENTS = [
+  { label: '\U0001F381 Bonus Draw', kind: 'bonus', n: 1 },
+  { label: '\U0001F500 Shuffle Everyone!', kind: 'shuffle' },
+  { label: '\U0001F381 Bonus Draw', kind: 'bonus', n: 1 },
+  { label: '\u2B07\uFE0F Leaders Back 10', kind: 'leadersBack' },
+  { label: '\U0001F381 Bonus Draw', kind: 'bonus', n: 1 },
+  { label: '\U0001F381\U0001F381 Double Bonus!', kind: 'bonus', n: 2 },
+];
+
+function startGroupMinigame(resume) {
+  const parts = connectedOf(players.filter(pl => !pl.finished));
+  if (parts.length < 2) { resume(); return; }
+  const gen = gameGen, sess = ++mgSession;
+  const seed = (Math.random() * 1e9) | 0;
+  const DURATION = 45000;
+  showMgOverlay('\U0001F998 DOODLE DASH!', 'Round complete! Everyone: climb to the finish line on your phones! Winner spins the Wheel of Fortune \U0001F3A1', 'Climbing\u2026');
+  const prog = new Map(parts.map(pl => [pl.slot, 0]));
+  let ended = false;
+  const end = (winner) => {
+    if (ended || gen !== gameGen || sess !== mgSession) return;
+    ended = true;
+    clearTimeout(guard); clearInterval(bar);
+    groupGame = null;
+    parts.forEach(pl => safeSend(connsBySlot.get(pl.slot), { type: 'doodleEnd', winner: winner.name, you: pl === winner }));
+    updateMgStatus(`\U0001F3C6 ${winner.name} reached the top!`);
+    setTimeout(() => {
+      if (gen !== gameGen) return;
+      hideMgOverlay();
+      offerWheel(winner, resume);
+    }, 2200);
+  };
+  groupGame = { sess, prog, parts, end };
+  parts.forEach(pl => safeSend(connsBySlot.get(pl.slot), { type: 'doodleStart', seed, duration: DURATION, color: pl.color.hex }));
+  const bar = setInterval(() => {
+    if (gen !== gameGen || sess !== mgSession) { clearInterval(bar); return; }
+    const lead = [...prog.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (lead) {
+      const pl = parts.find(pp => pp.slot === lead[0]);
+      if (pl) updateMgStatus(`${pl.name} leads \u2014 ${Math.round(lead[1] * 100)}% up!`);
+    }
+  }, 900);
+  const guard = setTimeout(() => {
+    if (gen !== gameGen || sess !== mgSession || ended) return;
+    let best = parts[0], bh = -1;
+    parts.forEach(pl => { const h = prog.get(pl.slot) || 0; if (h > bh) { bh = h; best = pl; } });
+    end(best);
+  }, DURATION + 3000);
+}
+
+let wheelPending = null; // { winner, resume }
+function offerWheel(winner, resume) {
+  const c = connsBySlot.get(winner.slot);
+  if (!c || !c.open) { winner.bonusDraws++; updatePlayerPanel(); broadcastState(); resume(); return; }
+  const gen = gameGen;
+  showMgOverlay('\U0001F3A1 WHEEL OF FORTUNE', `${winner.name} won the race \u2014 spin the wheel on your phone!`, 'Waiting for the spin\u2026');
+  wheelPending = { winner, resume };
+  safeSend(c, { type: 'wheelOffer', segments: WHEEL_SEGMENTS.map(w => w.label) });
+  setTimeout(() => { // auto-spin if they wander off
+    if (gen === gameGen && wheelPending && wheelPending.winner === winner) doSpin(winner);
+  }, 20000);
+}
+
+function doSpin(winner) {
+  if (!wheelPending || wheelPending.winner !== winner) return;
+  const { resume } = wheelPending;
+  wheelPending = null;
+  const gen = gameGen;
+  const idx = Math.floor(Math.random() * WHEEL_SEGMENTS.length);
+  const seg = WHEEL_SEGMENTS[idx];
+  const c = connsBySlot.get(winner.slot);
+  if (c) safeSend(c, { type: 'wheelResult', idx, segments: WHEEL_SEGMENTS.map(w => w.label) });
+  updateMgStatus('Spinning\u2026');
+  setTimeout(() => {
+    if (gen !== gameGen) return;
+    applyWheel(winner, seg);
+    updateMgStatus(`${seg.label}`);
+    setTimeout(() => {
+      if (gen !== gameGen) return;
+      hideMgOverlay();
+      resume();
+    }, 2600);
+  }, 4400);
+}
+
+function snapAllPawns() {
+  players.forEach((pl, i) => {
+    const pawn = pawns[i];
+    if (!pawn) return;
+    const pt = pathPoints[pl.position];
+    const off = pawnOffset(i, players.length);
+    pawn.position.set(pt.x + off.x, TILE_TOP_Y, pt.z + off.z);
+    pawn.userData.baseY = TILE_TOP_Y;
+    pawn.userData.moving = false;
   });
 }
 
-function updateTopBar() {
-  const p = players[currentPlayerIdx];
-  const bar = document.getElementById('top-bar');
-  bar.style.setProperty('--turn-color', p.color.hex);
-  document.getElementById('current-player-token').style.background = p.color.hex;
-  document.getElementById('cp-name').textContent = p.name;
-  // Re-trigger the attention-grabbing pop each time the turn changes
-  bar.classList.remove('pop');
-  void bar.offsetWidth;
-  bar.classList.add('pop');
-}
-
-function escapeHtml(str) {
-  return str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function applyWheel(winner, seg) {
+  if (seg.kind === 'bonus') {
+    winner.bonusDraws += seg.n;
+    showMessage(`${winner.name} spun ${seg.label}!`);
+  } else if (seg.kind === 'shuffle') {
+    // Randomly permute everyone's board positions
+    const active = players.filter(pl => !pl.finished);
+    const positions = active.map(pl => pl.position);
+    for (let i = positions.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [positions[i], positions[j]] = [positions[j], positions[i]];
+    }
+    active.forEach((pl, i) => { pl.position = positions[i]; });
+    snapAllPawns();
+    showMessage(`\U0001F500 ${winner.name} spun SHUFFLE \u2014 everyone swapped places!`);
+  } else if (seg.kind === 'leadersBack') {
+    const leaders = [...players].filter(pl => !pl.finished && pl.position > 0)
+      .sort((a, b) => b.position - a.position).slice(0, 2);
+    leaders.forEach(pl => { pl.position = Math.max(0, pl.position - 10); });
+    snapAllPawns();
+    showMessage(`\u2B07\uFE0F ${leaders.map(pl => pl.name).join(' & ')} got knocked back 10 spaces!`);
+  }
+  updatePlayerPanel();
+  broadcastState();
 }
 
 function drawCard() {
@@ -2650,9 +2863,13 @@ function drawCard() {
   if (card.type === 'single' || card.type === 'double') {
     trackRainbowColor(card.color);
   } else if (card.type === 'special') {
-    // Special location cards come with a bonus draw!
-    players[currentPlayerIdx].bonusDraws++;
-    updatePlayerPanel();
+    // Bonus draw ONLY if the special spot is BEHIND the player — a backward
+    // jump comes with a consolation prize; a forward jump is its own reward.
+    card.awardBonus = card.spot.pathIndex < players[currentPlayerIdx].position;
+    if (card.awardBonus) {
+      players[currentPlayerIdx].bonusDraws++;
+      updatePlayerPanel();
+    }
   }
   updateBonusButton();
 
@@ -2765,7 +2982,7 @@ function resolveCard(card) {
       player.skipNext = true;
       showMessage(`${player.name} got stuck in the goo! Skips next turn 🍯`);
     } else if (card.type === 'special') {
-      showMessage(`${player.name} jumped to ${card.spot.name}! ${card.spot.icon} +1 Bonus Draw 🎁`);
+      showMessage(`${player.name} jumped to ${card.spot.name}! ${card.spot.icon}` + (card.awardBonus ? ' +1 Bonus Draw 🎁' : ''));
     } else if (target === player.position) {
       showMessage(`No matching tile ahead. ${player.name} stays put.`);
     } else {
@@ -2908,6 +3125,26 @@ function endTurn() {
     currentPlayerIdx = (currentPlayerIdx + 1) % players.length;
     attempts++;
   } while (players[currentPlayerIdx].finished && attempts < players.length);
+
+  // After every full round of turns, the whole group races Doodle Dash
+  roundTurnCounter++;
+  const activeCount = players.filter(pl => !pl.finished).length;
+  if (roundTurnCounter >= activeCount && activeCount >= 2) {
+    roundTurnCounter = 0;
+    canDraw = false;
+    deck.classList.add('disabled');
+    updatePlayerPanel();
+    updateTopBar();
+    updateBonusButton();
+    startGroupMinigame(() => {
+      canDraw = true;
+      deck.classList.remove('disabled');
+      updatePlayerPanel();
+      updateTopBar();
+      updateBonusButton();
+    });
+    return;
+  }
 
   canDraw = true;
   deck.classList.remove('disabled');
@@ -3225,6 +3462,27 @@ function handleControllerMsg(conn, msg) {
     }
     return;
   }
+  if (msg.type === 'mgInput') {
+    if (mgInputHandler) mgInputHandler(slot, msg);
+    return;
+  }
+  if (msg.type === 'doodleProgress') {
+    if (groupGame && groupGame.prog.has(slot) && typeof msg.h === 'number') {
+      groupGame.prog.set(slot, Math.max(groupGame.prog.get(slot), Math.min(1, msg.h)));
+    }
+    return;
+  }
+  if (msg.type === 'doodleFinish') {
+    if (groupGame) {
+      const pl = groupGame.parts.find(pp => pp.slot === slot);
+      if (pl) { groupGame.prog.set(slot, 1); groupGame.end(pl); }
+    }
+    return;
+  }
+  if (msg.type === 'spin') {
+    if (wheelPending && wheelPending.winner.slot === slot) doSpin(wheelPending.winner);
+    return;
+  }
   if (msg.type === 'press') {
     if (remotePressHandler) remotePressHandler(slot);
   } else if (msg.type === 'draw') {
@@ -3391,6 +3649,9 @@ function initControllerMode(code) {
     hostPrimary.disabled = true;
     screen.classList.remove('your-turn');
     padEl.classList.remove('show');
+    cleanupMg();
+    mgScreen.classList.remove('show');
+    wheelScreen.classList.remove('show');
     statusEl.textContent = 'Game screen restarting… reconnecting';
     clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(connectToHost, 2500);
@@ -3408,6 +3669,302 @@ function initControllerMode(code) {
       }
     } else {
       statusEl.textContent = 'Connection problem (' + err.type + '). Reload to try again.';
+    }
+  });
+
+  // ===== Phone mini-games (Pong / Tron rendered from big-screen state,
+  // Doodle Dash simulated locally, Wheel of Fortune) =====
+  const mgScreen = document.getElementById('mg-screen');
+  const mgCanvas = document.getElementById('mg-canvas');
+  const mgCtx = mgCanvas.getContext('2d');
+  const mgTitle = document.getElementById('mg-title');
+  const mgMsg = document.getElementById('mg-msg');
+  const tronControls = document.getElementById('mg-tron-controls');
+  let mg = null; // active phone-side mini-game state
+
+  function openMg(title, w, h, tron) {
+    mgTitle.textContent = title;
+    mgMsg.textContent = '';
+    mgCanvas.width = w; mgCanvas.height = h;
+    tronControls.classList.toggle('show', !!tron);
+    mgScreen.classList.add('show');
+    try { if (navigator.vibrate) navigator.vibrate(80); } catch (e) {}
+  }
+  function closeMg(delay) {
+    setTimeout(() => { mgScreen.classList.remove('show'); mg = null; }, delay || 0);
+  }
+
+  // --- Pong renderer + paddle input ---
+  function startPongPhone(msg) {
+    const W = Math.min(window.innerWidth - 30, 420);
+    const H = Math.round(W * 0.6);
+    openMg(`🏓 ${msg.names[0]} vs ${msg.names[1]}`, W, H, false);
+    mg = { kind: 'pong', side: msg.side, colors: msg.colors, names: msg.names, W, H };
+    mgMsg.textContent = msg.side === 0 ? 'You are the LEFT paddle — drag up/down!' : 'You are the RIGHT paddle — drag up/down!';
+    let lastSent = 0;
+    const sendY = (clientY) => {
+      const r = mgCanvas.getBoundingClientRect();
+      const y = Math.max(0, Math.min(1, (clientY - r.top) / r.height));
+      const now = Date.now();
+      if (now - lastSent > 40 && conn && conn.open) { lastSent = now; conn.send({ type: 'mgInput', y }); }
+    };
+    mg.onPointer = (e) => { e.preventDefault(); sendY(e.clientY); };
+    mgScreen.addEventListener('pointermove', mg.onPointer);
+    mgScreen.addEventListener('pointerdown', mg.onPointer);
+  }
+  function drawPong(f) {
+    if (!mg || mg.kind !== 'pong') return;
+    const { W, H } = mg;
+    const sx = W / 100, sy = H / 60;
+    mgCtx.clearRect(0, 0, W, H);
+    mgCtx.strokeStyle = 'rgba(255,255,255,0.2)';
+    mgCtx.setLineDash([6, 8]);
+    mgCtx.beginPath(); mgCtx.moveTo(W / 2, 0); mgCtx.lineTo(W / 2, H); mgCtx.stroke();
+    mgCtx.setLineDash([]);
+    const PH = 16 * sy, PW = 8;
+    [0, 1].forEach(i => {
+      mgCtx.fillStyle = mg.colors[i];
+      const px = i === 0 ? 6 : W - 6 - PW;
+      mgCtx.fillRect(px, f.p[i] * sy - PH / 2, PW, PH);
+      if (i === mg.side) {
+        mgCtx.strokeStyle = 'white'; mgCtx.lineWidth = 2;
+        mgCtx.strokeRect(px - 2, f.p[i] * sy - PH / 2 - 2, PW + 4, PH + 4);
+      }
+    });
+    mgCtx.fillStyle = 'white';
+    mgCtx.beginPath(); mgCtx.arc(f.b[0] * sx, f.b[1] * sy, 6, 0, Math.PI * 2); mgCtx.fill();
+    mgCtx.font = 'bold 22px Fredoka, sans-serif';
+    mgCtx.textAlign = 'center';
+    mgCtx.fillStyle = 'rgba(255,255,255,0.85)';
+    mgCtx.fillText(`${f.s[0]}  —  ${f.s[1]}`, W / 2, 26);
+  }
+
+  // --- Tron renderer + turn buttons ---
+  function startTronPhone(msg) {
+    const size = Math.min(window.innerWidth - 30, window.innerHeight - 240, 400);
+    openMg('🏍 TRON', size, size, true);
+    mg = {
+      kind: 'tron', idx: msg.idx, grid: msg.grid, colors: msg.colors,
+      cell: size / msg.grid, trails: msg.heads.map(h => [h.slice()]), alive: msg.heads.map(() => true),
+    };
+    mgMsg.textContent = `You are ${msg.names[msg.idx]} — don't crash!`;
+    drawTron();
+  }
+  function drawTron() {
+    if (!mg || mg.kind !== 'tron') return;
+    const size = mgCanvas.width, c = mg.cell;
+    mgCtx.clearRect(0, 0, size, size);
+    mg.trails.forEach((tr, i) => {
+      mgCtx.fillStyle = mg.alive[i] ? mg.colors[i] : 'rgba(120,120,120,0.5)';
+      tr.forEach(([x, y]) => mgCtx.fillRect(x * c, y * c, c - 0.5, c - 0.5));
+      const head = tr[tr.length - 1];
+      if (head && mg.alive[i]) {
+        mgCtx.fillStyle = 'white';
+        mgCtx.fillRect(head[0] * c + c * 0.25, head[1] * c + c * 0.25, c * 0.5, c * 0.5);
+      }
+    });
+    mgCtx.strokeStyle = 'rgba(255,255,255,0.25)';
+    mgCtx.lineWidth = 2;
+    mgCtx.strokeRect(0, 0, size, size);
+  }
+  function tronFrame(f) {
+    if (!mg || mg.kind !== 'tron') return;
+    f.heads.forEach((h, i) => {
+      if (h) mg.trails[i].push(h.slice());
+      mg.alive[i] = f.alive[i];
+    });
+    if (!mg.alive[mg.idx]) mgMsg.textContent = '💥 Crashed! Watch the finish…';
+    drawTron();
+  }
+  document.getElementById('mg-left').addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (mg && mg.kind === 'tron' && conn && conn.open) conn.send({ type: 'mgInput', turn: 'L' });
+  });
+  document.getElementById('mg-right').addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (mg && mg.kind === 'tron' && conn && conn.open) conn.send({ type: 'mgInput', turn: 'R' });
+  });
+
+  // --- Doodle Dash: fully local simulation, seeded platforms for fairness ---
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function startDoodlePhone(msg) {
+    const W = Math.min(window.innerWidth - 30, 360);
+    const H = Math.min(window.innerHeight - 200, 520);
+    openMg('🦘 DOODLE DASH!', W, H, false);
+    mgMsg.textContent = 'Hold LEFT or RIGHT side to steer — race to the finish line!';
+    const rng = mulberry32(msg.seed);
+    const FINISH = 2600;
+    const plats = [{ x: W / 2 - 30, y: -10, w: 60 }];
+    for (let y = 60; y < FINISH + 100; y += 55 + rng() * 40) {
+      plats.push({ x: rng() * (W - 62), y, w: 62 });
+    }
+    mg = {
+      kind: 'doodle', W, H, plats, FINISH, color: msg.color,
+      x: W / 2, y: 0, vy: 10, vx: 0, maxY: 0, hold: 0, doneLocal: false,
+      lastReport: 0, raf: null, ended: false,
+    };
+    mg.onDown = (e) => { e.preventDefault(); const r = mgCanvas.getBoundingClientRect(); mg.hold = (e.clientX - r.left) < r.width / 2 ? -1 : 1; };
+    mg.onUp = (e) => { e.preventDefault(); mg.hold = 0; };
+    mgScreen.addEventListener('pointerdown', mg.onDown);
+    mgScreen.addEventListener('pointerup', mg.onUp);
+    mgScreen.addEventListener('pointercancel', mg.onUp);
+    const G = -0.34, JUMP = 11, MOVE = 0.9, MAXVX = 6; // world-y grows upward
+    function step() {
+      if (!mg || mg.kind !== 'doodle' || mg.ended) return;
+      mg.vx += mg.hold * MOVE;
+      mg.vx = Math.max(-MAXVX, Math.min(MAXVX, mg.vx)) * 0.96;
+      mg.x += mg.vx;
+      if (mg.x < -12) mg.x = W + 12; if (mg.x > W + 12) mg.x = -12; // wrap
+      const prevY = mg.y;
+      mg.vy += G;
+      mg.y += mg.vy;
+      if (mg.vy < 0) { // falling: land when crossing a platform from above
+        for (const pl of mg.plats) {
+          if (mg.x > pl.x - 8 && mg.x < pl.x + pl.w + 8 &&
+              prevY >= pl.y - 2 && mg.y <= pl.y + 4 && Math.abs(mg.y - pl.y) < 22) {
+            mg.y = pl.y; mg.vy = JUMP;
+            try { if (navigator.vibrate) navigator.vibrate(10); } catch (e) {}
+            break;
+          }
+        }
+      }
+      if (mg.y > mg.maxY) mg.maxY = mg.y;
+      // fell far below best height -> gentle respawn at best platform
+      if (mg.y < mg.maxY - H * 0.9) {
+        let best = mg.plats[0];
+        for (const pl of mg.plats) if (pl.y <= mg.maxY && pl.y > best.y) best = pl;
+        mg.x = best.x + best.w / 2; mg.y = best.y; mg.vy = JUMP;
+      }
+      // progress report
+      const now = Date.now();
+      if (now - mg.lastReport > 450 && conn && conn.open) {
+        mg.lastReport = now;
+        conn.send({ type: 'doodleProgress', h: Math.min(1, mg.maxY / FINISH) });
+      }
+      if (!mg.doneLocal && mg.maxY >= FINISH) {
+        mg.doneLocal = true;
+        mgMsg.textContent = '🏁 FINISHED! Waiting for results…';
+        if (conn && conn.open) conn.send({ type: 'doodleFinish' });
+      }
+      drawDoodle();
+      mg.raf = requestAnimationFrame(step);
+    }
+    function drawDoodle() {
+      const cam = Math.max(0, mg.maxY - H * 0.55);
+      const toScreen = (wy) => H - (wy - cam) - 40;
+      mgCtx.clearRect(0, 0, W, H);
+      // finish line
+      const fy = toScreen(mg.FINISH);
+      if (fy > -20 && fy < H + 20) {
+        mgCtx.fillStyle = '#ffd93d';
+        for (let x = 0; x < W; x += 20) mgCtx.fillRect(x, fy, 10, 6);
+        mgCtx.font = 'bold 14px Fredoka'; mgCtx.fillStyle = '#ffd93d';
+        mgCtx.textAlign = 'center';
+        mgCtx.fillText('FINISH', W / 2, fy - 8);
+      }
+      mgCtx.fillStyle = '#6bcf7f';
+      for (const pl of mg.plats) {
+        const sy = toScreen(pl.y);
+        if (sy > -10 && sy < H + 10) {
+          mgCtx.beginPath();
+          mgCtx.roundRect(pl.x, sy, pl.w, 10, 5);
+          mgCtx.fill();
+        }
+      }
+      // jumper
+      const jy = toScreen(mg.y);
+      mgCtx.fillStyle = mg.color;
+      mgCtx.beginPath(); mgCtx.arc(mg.x, jy - 10, 11, 0, Math.PI * 2); mgCtx.fill();
+      mgCtx.fillStyle = 'white';
+      mgCtx.beginPath(); mgCtx.arc(mg.x - 4, jy - 13, 2.4, 0, Math.PI * 2);
+      mgCtx.arc(mg.x + 4, jy - 13, 2.4, 0, Math.PI * 2); mgCtx.fill();
+      // progress
+      mgCtx.fillStyle = 'rgba(255,255,255,0.8)';
+      mgCtx.font = 'bold 15px Fredoka'; mgCtx.textAlign = 'left';
+      mgCtx.fillText(Math.round(Math.min(1, mg.maxY / mg.FINISH) * 100) + '%', 10, 22);
+    }
+    step();
+  }
+  function stopDoodle() {
+    if (mg && mg.kind === 'doodle') {
+      mg.ended = true;
+      if (mg.raf) cancelAnimationFrame(mg.raf);
+      mgScreen.removeEventListener('pointerdown', mg.onDown);
+      mgScreen.removeEventListener('pointerup', mg.onUp);
+      mgScreen.removeEventListener('pointercancel', mg.onUp);
+    }
+  }
+  function cleanupMg() {
+    if (mg && mg.kind === 'pong' && mg.onPointer) {
+      mgScreen.removeEventListener('pointermove', mg.onPointer);
+      mgScreen.removeEventListener('pointerdown', mg.onPointer);
+    }
+    stopDoodle();
+  }
+
+  // --- Wheel of Fortune ---
+  const wheelScreen = document.getElementById('wheel-screen');
+  const wheelCanvas = document.getElementById('wheel-canvas');
+  const wheelCtx = wheelCanvas.getContext('2d');
+  const wheelSpinBtn = document.getElementById('wheel-spin-btn');
+  const wheelResult = document.getElementById('wheel-result');
+  let wheelSegs = [];
+  function drawWheel(angle) {
+    const cx = 150, cy = 150, r = 140, n = wheelSegs.length;
+    const cols = ['#ff4d6d', '#4dabf7', '#ffd93d', '#b380ff', '#6bcf7f', '#ff9f4a'];
+    wheelCtx.clearRect(0, 0, 300, 300);
+    wheelCtx.save();
+    wheelCtx.translate(cx, cy);
+    wheelCtx.rotate(angle);
+    for (let i = 0; i < n; i++) {
+      const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1) / n) * Math.PI * 2;
+      wheelCtx.fillStyle = cols[i % cols.length];
+      wheelCtx.beginPath(); wheelCtx.moveTo(0, 0); wheelCtx.arc(0, 0, r, a0, a1); wheelCtx.fill();
+      wheelCtx.save();
+      wheelCtx.rotate((a0 + a1) / 2);
+      wheelCtx.fillStyle = 'white';
+      wheelCtx.font = 'bold 13px Fredoka';
+      wheelCtx.textAlign = 'right';
+      const short = wheelSegs[i].replace(' Bonus Draw', ' Bonus').replace(' Everyone!', '!');
+      wheelCtx.fillText(short.slice(0, 14), r - 10, 5);
+      wheelCtx.restore();
+    }
+    wheelCtx.restore();
+    // pointer
+    wheelCtx.fillStyle = 'white';
+    wheelCtx.beginPath();
+    wheelCtx.moveTo(cx - 12, 4); wheelCtx.lineTo(cx + 12, 4); wheelCtx.lineTo(cx, 26);
+    wheelCtx.fill();
+  }
+  function animateWheelTo(idx) {
+    const n = wheelSegs.length;
+    // pointer sits at the top (-90deg); land the middle of segment idx there
+    const target = -Math.PI / 2 - ((idx + 0.5) / n) * Math.PI * 2 - Math.PI * 2 * 5;
+    const start = performance.now(), DUR = 4000;
+    function frame(t) {
+      const k = Math.min(1, (t - start) / DUR);
+      const ease = 1 - Math.pow(1 - k, 3);
+      drawWheel(target * ease);
+      if (k < 1) requestAnimationFrame(frame);
+      else {
+        wheelResult.textContent = wheelSegs[idx];
+        try { if (navigator.vibrate) navigator.vibrate([80, 40, 80]); } catch (e) {}
+        setTimeout(() => wheelScreen.classList.remove('show'), 2800);
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+  wheelSpinBtn.addEventListener('click', () => {
+    if (conn && conn.open) {
+      wheelSpinBtn.style.display = 'none';
+      conn.send({ type: 'spin' });
     }
   });
 
@@ -3494,6 +4051,46 @@ function initControllerMode(code) {
       const pi = document.getElementById('ctrl-pass-input');
       pi.value = '';
       if (!hostTaken) document.getElementById('ctrl-host-pass').style.display = 'flex';
+    } else if (msg.type === 'mgStart') {
+      cleanupMg();
+      if (msg.kind === 'pong') startPongPhone(msg);
+      else if (msg.kind === 'tron') startTronPhone(msg);
+    } else if (msg.type === 'mgState') {
+      if (mg && mg.kind === 'pong') drawPong(msg);
+      else if (mg && mg.kind === 'tron') tronFrame(msg);
+    } else if (msg.type === 'mgEnd') {
+      mgMsg.textContent = msg.you
+        ? '🏆 YOU WIN! +1 Bonus Draw 🎁'
+        : (msg.winner ? `${msg.winner} wins!` : 'Draw!');
+      cleanupMg();
+      closeMg(2300);
+    } else if (msg.type === 'doodleStart') {
+      cleanupMg();
+      startDoodlePhone(msg);
+    } else if (msg.type === 'doodleEnd') {
+      stopDoodle();
+      mgMsg.textContent = msg.you
+        ? '🏆 YOU WIN! Get ready to spin…'
+        : `🏁 ${msg.winner} reached the top first!`;
+      closeMg(2200);
+    } else if (msg.type === 'wheelOffer') {
+      cleanupMg();
+      mgScreen.classList.remove('show');
+      wheelSegs = msg.segments || [];
+      wheelResult.textContent = '';
+      wheelSpinBtn.style.display = '';
+      drawWheel(0);
+      wheelScreen.classList.add('show');
+      try { if (navigator.vibrate) navigator.vibrate([60, 40, 60]); } catch (e) {}
+    } else if (msg.type === 'wheelResult') {
+      wheelSegs = msg.segments || wheelSegs;
+      if (!wheelScreen.classList.contains('show')) { // auto-spin path
+        wheelResult.textContent = '';
+        wheelSpinBtn.style.display = 'none';
+        wheelScreen.classList.add('show');
+      }
+      wheelSpinBtn.style.display = 'none';
+      animateWheelTo(msg.idx);
     } else if (msg.type === 'state' && myInfo) {
       const myTurnNow = !!(msg.yourTurn && !msg.finished && msg.started && !msg.mashActive);
       if (msg.mashActive) document.getElementById('ctrl-rename-row').style.display = 'none';
