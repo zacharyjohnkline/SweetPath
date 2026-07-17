@@ -967,7 +967,7 @@
       </div>
 
       <button class="start-btn" id="start-btn">Start Adventure</button>
-      <div style="margin-top:14px; font-size:11px; color:#c5a0b8; font-weight:500;">build v9 — host passcode</div>
+      <div style="margin-top:14px; font-size:11px; color:#c5a0b8; font-weight:500;">build v10 — single host + passcode</div>
     </div>
   </div>
 
@@ -1020,6 +1020,7 @@
       <button id="ctrl-draw" class="ctrl-action">🃏 Draw Card</button>
       <button id="ctrl-bonus" class="ctrl-action">🎁 Bonus Draw</button>
     </div>
+    <div style="margin-top:auto; padding-top:10px; font-size:11px; color:#c5a0b8; font-weight:500;">build v10</div>
   </div>
 
   <div id="game-ui" style="display:none;">
@@ -1084,7 +1085,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // ===== Game Configuration =====
-console.log('Sweet Path build v9 (host passcode protection)');
+console.log('Sweet Path build v10 (single host, passcode enforced)');
 
 const COLORS = {
   red:    { hex: '#ff4d6d', three: 0xff4d6d },
@@ -2880,7 +2881,11 @@ function slotInfo() {
   return slots;
 }
 
-function sendSlots(conn) { safeSend(conn, { type: 'slots', slots: slotInfo() }); }
+function liveHostExists() {
+  for (const c of hostConns) if (c.open) return true;
+  return false;
+}
+function sendSlots(conn) { safeSend(conn, { type: 'slots', slots: slotInfo(), hostTaken: liveHostExists() }); }
 function broadcastSlots() { allConns.forEach(c => sendSlots(c)); }
 
 function updatePhoneStatus() {
@@ -2928,15 +2933,21 @@ function handleControllerMsg(conn, msg) {
     const devId = typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 32) : null;
     const passOk = typeof msg.pass === 'string' && msg.pass === HOST_PASS;
     const remembered = !!(devId && approvedHostDevices.has(devId));
-    // Host powers require the passcode — or being a device that already
-    // entered it correctly this session (so the real host's refreshes rejoin
-    // without retyping).
+    // Rules, in order:
+    // 1. The remembered host device may always rejoin (its own refresh).
+    // 2. Otherwise, if a live host already exists, nobody else may join.
+    // 3. Otherwise the passcode is required.
+    if (!remembered && !conn._isHost && liveHostExists()) {
+      safeSend(conn, { type: 'hostDenied', reason: "There's already a host!" });
+      return;
+    }
     if (passOk || remembered) {
       if (devId) approvedHostDevices.add(devId);
       conn._isHost = true;
       hostConns.add(conn);
       safeSend(conn, { type: 'hostClaimed' });
       sendHostState(conn);
+      broadcastSlots(); // hide the Join-as-Host button on everyone else's phone
     } else {
       safeSend(conn, { type: 'hostDenied', reason: 'Wrong passcode!' });
     }
@@ -3048,7 +3059,14 @@ function initControllerMode(code) {
   const hostCountRow = document.getElementById('ctrl-host-count');
   let myInfo = null;
   let isHost = false;
+  let hostTaken = false; // someone (possibly us) already holds the host seat
   let conn = null;
+
+  function updateHostJoinVisibility() {
+    const show = !isHost && !hostTaken;
+    hostJoinBtn.style.display = show ? 'block' : 'none';
+    if (!show) document.getElementById('ctrl-host-pass').style.display = 'none';
+  }
 
   // A permanent random ID for THIS phone's browser, stored like a cookie.
   // The host uses it to verify that a rejoining phone really owned its
@@ -3108,7 +3126,6 @@ function initControllerMode(code) {
     conn.on('open', () => {
       statusEl.textContent = 'Connected! Type your name, then pick your player:';
       nameRow.style.display = 'block';
-      hostJoinBtn.style.display = 'block';
       conn.send({ type: 'hello' });
     });
     conn.on('data', onMsg);
@@ -3122,7 +3139,10 @@ function initControllerMode(code) {
 
   function onMsg(msg) {
     if (!msg || typeof msg !== 'object') return;
-    if (msg.type === 'slots' && !myInfo) {
+    if (msg.type === 'slots') {
+      hostTaken = !!msg.hostTaken;
+      updateHostJoinVisibility();
+      if (myInfo) return;
       // If this phone refreshed mid-game, reclaim its old role(s) automatically.
       // A phone can be BOTH the host and a player, so restore each independently.
       if (autoClaimHost) {
@@ -3153,8 +3173,8 @@ function initControllerMode(code) {
       persist({ slot: msg.slot, name: msg.name });
       slotsEl.style.display = 'none';
       nameRow.style.display = 'none';
-      // Still allow becoming the host after picking a character
-      hostJoinBtn.style.display = isHost ? 'none' : 'block';
+      // Becoming host afterward is still possible if no one holds the seat
+      updateHostJoinVisibility();
       padEl.classList.add('show');
       updateHeader();
       mashBtn.style.background = `linear-gradient(160deg, ${msg.colorHex}, ${msg.colorHex}cc)`;
@@ -3163,9 +3183,9 @@ function initControllerMode(code) {
         : `You're ${msg.name}! Waiting for the game…`;
     } else if (msg.type === 'hostClaimed') {
       isHost = true;
+      hostTaken = true;
       persist({ host: true });
-      hostJoinBtn.style.display = 'none';
-      document.getElementById('ctrl-host-pass').style.display = 'none';
+      updateHostJoinVisibility();
       hostPad.style.display = 'block';
       updateHeader();
       // Still allow picking a character after becoming the host
@@ -3191,10 +3211,10 @@ function initControllerMode(code) {
         }
       }
     } else if (msg.type === 'hostDenied') {
-      statusEl.textContent = '❌ ' + (msg.reason || 'Wrong passcode!') + ' Try again — or just pick a character and play.';
+      statusEl.textContent = '❌ ' + (msg.reason || 'Wrong passcode!') + (hostTaken ? '' : ' Try again — or just pick a character and play.');
       const pi = document.getElementById('ctrl-pass-input');
       pi.value = '';
-      document.getElementById('ctrl-host-pass').style.display = 'flex';
+      if (!hostTaken) document.getElementById('ctrl-host-pass').style.display = 'flex';
     } else if (msg.type === 'denied') {
       statusEl.textContent = (msg.reason || 'Could not claim that player') + ' Pick one below!';
       conn.send({ type: 'hello' });
