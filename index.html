@@ -334,6 +334,48 @@
     background-clip: text;
   }
 
+  /* ===== Lobby roster ===== */
+  #lobby-roster {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 16px;
+    max-height: 32vh;
+    overflow-y: auto;
+  }
+  .lobby-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: white;
+    padding: 6px 12px;
+    border-radius: 14px;
+    border: 2px solid #f0d0e0;
+    font-weight: 600;
+  }
+  .lobby-token {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: inset 0 -3px 0 rgba(0,0,0,0.15);
+  }
+  .lobby-name { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lobby-key {
+    font-family: 'Bowlby One SC', sans-serif;
+    font-size: 12px;
+    background: #fff4c2;
+    border-radius: 8px;
+    padding: 2px 8px;
+    color: var(--c-text);
+    flex-shrink: 0;
+  }
+  .lobby-empty {
+    color: #8a5a78;
+    font-weight: 500;
+    font-size: 14px;
+    padding: 14px;
+  }
+
   /* ===== Phone controllers (host setup panel) ===== */
   #phone-section { margin-bottom: 16px; }
   #phone-meta { min-width: 0; max-width: 240px; }
@@ -954,15 +996,7 @@
       <h1>Sweet Path</h1>
       <div class="subtitle">A candy-coated journey to the Sugar Castle 🏰</div>
 
-      <span class="player-count-label">How many players?</span>
-      <div class="player-count" id="player-count">
-        <button class="pc-btn" data-count="2">2</button>
-        <button class="pc-btn active" data-count="3">3</button>
-        <button class="pc-btn" data-count="4">4</button>
-        <button class="pc-btn" data-count="5">5</button>
-      </div>
-
-      <div id="player-inputs"></div>
+      <div id="lobby-roster"></div>
 
       <div id="phone-section">
         <div id="phone-info">
@@ -982,7 +1016,7 @@
       </div>
 
       <button class="start-btn" id="start-btn">Start Adventure</button>
-      <div style="margin-top:14px; font-size:11px; color:#c5a0b8; font-weight:500;">build v14 — rename each game</div>
+      <div style="margin-top:14px; font-size:11px; color:#c5a0b8; font-weight:500;">build v15 — unlimited players · fresh colors</div>
     </div>
   </div>
 
@@ -1021,7 +1055,8 @@
       <input id="ctrl-name" maxlength="14" placeholder="Type your name!"
         style="width:100%; padding:14px; border-radius:16px; border:3px solid var(--c-pink); font-family:'Fredoka',sans-serif; font-size:18px; font-weight:600; text-align:center; color:var(--c-text);" />
     </div>
-    <div id="ctrl-slots"></div>
+    <button id="ctrl-join-btn" class="ctrl-slot-btn"
+      style="background:linear-gradient(135deg,var(--c-green),#2f9e44); width:100%; max-width:340px; display:none;">🎮 Join Game</button>
     <button id="ctrl-host-join" class="ctrl-slot-btn"
       style="background:linear-gradient(135deg,#4a2545,#8a5a78); width:100%; max-width:340px; margin-top:10px; display:none;">👑 Join as Host</button>
     <div id="ctrl-host-pass" style="display:none; width:100%; max-width:340px; margin-top:10px; gap:8px;">
@@ -1031,7 +1066,6 @@
         style="background:linear-gradient(135deg,#4a2545,#8a5a78); flex:0 0 auto; padding:14px 20px;">Go</button>
     </div>
     <div id="ctrl-host-pad" style="display:none; width:100%; max-width:400px; text-align:center;">
-      <div id="ctrl-host-count" style="display:flex; gap:10px; justify-content:center; margin:8px 0 16px;"></div>
       <button id="ctrl-host-primary" class="ctrl-action"
         style="background:linear-gradient(135deg,#4a2545,#8a5a78); font-size:20px; padding:16px;">…</button>
       <div style="font-size:12px; color:#8a5a78; font-weight:500; margin-bottom:12px;">This button presses whatever big button is on the game screen.</div>
@@ -1042,7 +1076,7 @@
       <button id="ctrl-draw" class="ctrl-action">🃏 Draw Card</button>
       <button id="ctrl-bonus" class="ctrl-action">🎁 Bonus Draw</button>
     </div>
-    <div style="margin-top:auto; padding-top:10px; font-size:11px; color:#c5a0b8; font-weight:500;">build v14</div>
+    <div style="margin-top:auto; padding-top:10px; font-size:11px; color:#c5a0b8; font-weight:500;">build v15</div>
   </div>
 
   <div id="game-ui" style="display:none;">
@@ -1107,7 +1141,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // ===== Game Configuration =====
-console.log('Sweet Path build v14 (per-game rename with confirm)');
+console.log('Sweet Path build v15 (unlimited players, auto colors, no character lock-in)');
 
 const COLORS = {
   red:    { hex: '#ff4d6d', three: 0xff4d6d },
@@ -1119,14 +1153,6 @@ const COLORS = {
 };
 
 const COLOR_ORDER = ['red', 'orange', 'yellow', 'green', 'blue', 'purple'];
-
-const PLAYER_COLORS = [
-  { name: 'Cherry', hex: '#e63946', three: 0xe63946 },
-  { name: 'Mint',   hex: '#52b788', three: 0x52b788 },
-  { name: 'Berry',  hex: '#7209b7', three: 0x7209b7 },
-  { name: 'Lemon',  hex: '#ffb703', three: 0xffb703 },
-  { name: 'Soda',   hex: '#3a86ff', three: 0x3a86ff },
-];
 
 // Special locations along the path. Each has a path index they sit at.
 // They are landmark spaces — drawing the matching special card jumps you there.
@@ -1146,68 +1172,120 @@ const SHORTCUT = { from: 12, to: 38 };
 
 const TOTAL_SPACES = 64; // including start (0) and castle (63)
 
-// ===== Setup screen =====
-let playerCount = 3;
-let rosterPlayers = null; // the created players, kept across rematches
+// ===== Lobby (dynamic players, unlimited) =====
+// Players join from their phones via the QR code — as many as want to play.
+// Each joiner gets a unique auto-assigned color (golden-angle hue spacing
+// guarantees distinct colors no matter how many join).
+let rosterPlayers = [];   // everyone who has joined; persists across rematches
+let nextSlot = 0;         // ever-increasing join index
 let contestGen = 0;       // invalidates stale mash/duel timers after a restart
 let gameGen = 0;          // invalidates stale turn callbacks after a restart
 let engineReady = false;  // three.js scene initialized once
 const setupScreen = document.getElementById('setup-screen');
-const playerInputs = document.getElementById('player-inputs');
-const pcBtns = document.querySelectorAll('.pc-btn');
 
-function renderPlayerInputs() {
-  playerInputs.innerHTML = '';
-  for (let i = 0; i < playerCount; i++) {
-    const c = PLAYER_COLORS[i];
-    const row = document.createElement('div');
-    row.className = 'player-row';
-    row.innerHTML = `
-      <div class="player-token" style="background:${c.hex};"></div>
-      <input type="text" id="p-name-${i}" value="${c.name}" maxlength="14" />
-    `;
-    playerInputs.appendChild(row);
-  }
+const HUE_BASE = Math.random() * 360; // random palette rotation per session
+function colorForIndex(i) {
+  const h = (HUE_BASE + i * 137.508) % 360; // golden angle → maximally spread
+  const sat = 0.78, lig = 0.55;
+  const c = (1 - Math.abs(2 * lig - 1)) * sat;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = lig - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) [r, g, b] = [c, x, 0];
+  else if (h < 120) [r, g, b] = [x, c, 0];
+  else if (h < 180) [r, g, b] = [0, c, x];
+  else if (h < 240) [r, g, b] = [0, x, c];
+  else if (h < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  const toHex = v => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+  return '#' + toHex(r) + toHex(g) + toHex(b);
 }
-renderPlayerInputs();
 
-pcBtns.forEach(btn => {
-  btn.addEventListener('click', () => {
-    pcBtns.forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    playerCount = parseInt(btn.dataset.count);
-    renderPlayerInputs();
-    if (hostPeer) { broadcastSlots(); updatePhoneStatus(); }
-  });
-});
-
-document.getElementById('start-btn').addEventListener('click', () => {
-  const players = [];
-  for (let i = 0; i < playerCount; i++) {
-    const name = document.getElementById(`p-name-${i}`).value.trim() || PLAYER_COLORS[i].name;
-    players.push({
-      name,
-      color: PLAYER_COLORS[i],
-      key: MASH_KEYS[i], // their personal button for all mash contests
-      slot: i,           // creation-order index, used to route phone controllers
-      position: 0,
-      skipNext: false,
-      finished: false,
-      bonusDraws: 0,
-    });
-  }
-  rosterPlayers = players;
-  setupScreen.style.display = 'none';
-  showMashScreen(players);
-});
-
-// ===== Turn-order mash showdown =====
-// Each player is mapped to their own key (spread across the keyboard so
-// everyone can crowd around it), plus an on-screen pad for touch devices.
-// After a countdown, presses are counted for 3 seconds. Most presses goes
-// first, fewest goes last. Ties are broken by a coin flip.
-const MASH_KEYS = ['A', 'F', 'J', 'L', 'B'];
+// Keyboard keys for players who want to mash on the big screen's keyboard.
+// Phone pads always work; players beyond the key pool are phone-only.
+const KEY_POOL = ['A', 'F', 'J', 'L', 'B', 'Q', 'E', 'U', 'O', 'P'];
 const MASH_DURATION_MS = 3000;
+
+function makePlayer(name, deviceId) {
+  const slot = nextSlot++;
+  const hex = colorForIndex(slot);
+  return {
+    name,
+    deviceId: deviceId || null,
+    slot,
+    key: KEY_POOL[slot] || null,
+    color: { hex, three: parseInt(hex.slice(1), 16) },
+    position: 0,
+    skipNext: false,
+    finished: false,
+    bonusDraws: 0,
+  };
+}
+
+function renderLobbyRoster() {
+  const el = document.getElementById('lobby-roster');
+  if (!rosterPlayers.length) {
+    el.innerHTML = '<div class="lobby-empty">No players yet — scan the QR code to join!</div>';
+    return;
+  }
+  el.innerHTML = '';
+  rosterPlayers.forEach(pl => {
+    const row = document.createElement('div');
+    row.className = 'lobby-row';
+    row.innerHTML = `
+      <div class="lobby-token" style="background:${pl.color.hex};"></div>
+      <div class="lobby-name">${escapeHtml(pl.name)}</div>
+      ${pl.key ? `<div class="lobby-key">${pl.key}</div>` : '<div class="lobby-key">📱</div>'}
+    `;
+    el.appendChild(row);
+  });
+}
+renderLobbyRoster();
+
+// Start (or restart) a round with everyone currently in the roster
+function beginRound() {
+  if (rosterPlayers.length < 2) {
+    const sub = document.querySelector('.setup-card .subtitle');
+    if (sub) sub.textContent = 'Need at least 2 players — scan the QR code to join!';
+    return;
+  }
+  gameGen++;
+  contestGen++;
+  gameStarted = true;
+  rosterPlayers.forEach(pl => {
+    pl.position = 0;
+    pl.skipNext = false;
+    pl.finished = false;
+    pl.bonusDraws = 0;
+  });
+  rainbowCollected.clear();
+  clearTimeout(rainbowNoteTimer);
+  bonusDrawPending = false;
+  remotePressHandler = null;
+  canDraw = false; // startGame re-enables after the opening mash
+  currentPlayerIdx = 0;
+  if (drawnCardEl) drawnCardEl.classList.remove('show');
+  if (cardMessage) cardMessage.classList.remove('show');
+
+  // Reset the mash screen from any previous state
+  const resultsEl = document.getElementById('mash-results');
+  resultsEl.classList.remove('show');
+  resultsEl.innerHTML = '';
+  document.getElementById('mash-pads').style.display = '';
+  document.getElementById('mash-sub').textContent = 'Mash your button (phone pad or key) for 3 seconds. Most presses goes first, fewest goes last!';
+  const cd = document.getElementById('mash-countdown');
+  cd.classList.remove('go');
+  cd.textContent = 'Ready?';
+
+  document.getElementById('win-screen').classList.remove('show');
+  document.getElementById('duel-screen').classList.remove('show');
+  document.getElementById('game-ui').style.display = 'none';
+  setupScreen.style.display = 'none';
+  showMashScreen([...rosterPlayers].sort((a, b) => a.slot - b.slot));
+  broadcastRoster();
+}
+
+document.getElementById('start-btn').addEventListener('click', beginRound);
 
 function showMashScreen(pendingPlayers) {
   const gen = ++contestGen; // a rematch invalidates this contest's timers
@@ -1232,7 +1310,7 @@ function showMashScreen(pendingPlayers) {
     pad.style.background = `linear-gradient(160deg, ${p.color.hex}, ${p.color.hex}cc)`;
     pad.innerHTML = `
       <div class="mp-name">${escapeHtml(p.name)}</div>
-      <div class="mp-key">${p.key}</div>
+      <div class="mp-key">${p.key || '📱'}</div>
       <div class="mp-count">0</div>
     `;
     pad.addEventListener('pointerdown', (e) => {
@@ -1309,13 +1387,17 @@ function showMashScreen(pendingPlayers) {
       .sort((a, b) => b.presses - a.presses || a.tiebreak - b.tiebreak);
 
     // Show results
-    const placeLabels = ['1st', '2nd', '3rd', '4th', '5th'];
+    const ordinal = (n) => {
+      const t = n % 100;
+      if (t >= 11 && t <= 13) return n + 'th';
+      return n + ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+    };
     resultsEl.innerHTML = '';
     order.forEach((entry, i) => {
       const row = document.createElement('div');
       row.className = 'mash-result-row';
       row.innerHTML = `
-        <div class="mr-place">${placeLabels[i]}</div>
+        <div class="mr-place">${ordinal(i + 1)}</div>
         <div class="mr-token" style="background:${entry.player.color.hex};"></div>
         <div class="mr-name">${escapeHtml(entry.player.name)}</div>
         <div class="mr-count">${entry.presses} press${entry.presses === 1 ? '' : 'es'}</div>
@@ -2115,7 +2197,7 @@ function spawnPawns() {
 function pawnOffset(idx, total) {
   if (total === 1) return { x: 0, z: 0 };
   const angle = (idx / total) * Math.PI * 2;
-  const r = 0.5;
+  const r = Math.min(1.3, 0.35 + total * 0.09); // widen the ring for big groups
   return { x: Math.cos(angle) * r, z: Math.sin(angle) * r };
 }
 
@@ -2225,48 +2307,30 @@ function startGame(plyrs) {
 }
 
 // ===== Rematch =====
-// Resets everything in memory and jumps straight back to the button-mash
-// screen with the SAME players, names, and count — no reload, so no phone
-// ever disconnects and the host stays seated.
+// Back to the lobby with everyone still joined: names editable, newcomers
+// can scan in, and the host presses Start Adventure when ready.
 function rematch() {
-  if (!rosterPlayers) { location.reload(); return; }
   gameGen++;    // stale turn callbacks from the old game become no-ops
   contestGen++; // stale mash/duel timers become no-ops
+  gameStarted = false;
 
   document.getElementById('win-screen').classList.remove('show');
   document.getElementById('duel-screen').classList.remove('show');
+  document.getElementById('mash-screen').classList.remove('show');
   document.getElementById('game-ui').style.display = 'none';
+  setupScreen.style.display = '';
 
-  rosterPlayers.forEach(pl => {
-    pl.position = 0;
-    pl.skipNext = false;
-    pl.finished = false;
-    pl.bonusDraws = 0;
-  });
-  rainbowCollected.clear();
-  clearTimeout(rainbowNoteTimer);
-  bonusDrawPending = false;
   remotePressHandler = null;
-  canDraw = false; // no drawing during the opening mash; startGame re-enables
-  currentPlayerIdx = 0;
+  bonusDrawPending = false;
+  canDraw = false;
   if (drawnCardEl) drawnCardEl.classList.remove('show');
   if (cardMessage) cardMessage.classList.remove('show');
 
-  // Reset the mash screen from its previous "results" state
-  const resultsEl = document.getElementById('mash-results');
-  resultsEl.classList.remove('show');
-  resultsEl.innerHTML = '';
-  document.getElementById('mash-pads').style.display = '';
-  document.getElementById('mash-sub').textContent = 'Rematch! Mash your key (or tap your pad) for 3 seconds. Most presses goes first, fewest goes last!';
-  const cd = document.getElementById('mash-countdown');
-  cd.classList.remove('go');
-  cd.textContent = 'Ready?';
-
-  // Same crew, back in slot order for a fair fresh mash
-  showMashScreen([...rosterPlayers].sort((a, b) => a.slot - b.slot));
-
-  // Invite every claimed phone to (optionally) change its name for this game
-  slotConns.forEach(c => c && safeSend(c, { type: 'newGame' }));
+  renderLobbyRoster();
+  broadcastRoster();
+  broadcastState();
+  // Invite every joined phone to (optionally) change its name for the new game
+  connsBySlot.forEach(c => safeSend(c, { type: 'newGame' }));
 }
 
 // ===== Rainbow bonus tracker =====
@@ -2404,7 +2468,7 @@ function startDuel(contenders, space) {
     pad.style.background = `linear-gradient(160deg, ${e.p.color.hex}, ${e.p.color.hex}cc)`;
     pad.innerHTML = `
       <div class="mp-name">${escapeHtml(e.p.name)}</div>
-      <div class="mp-key">${e.p.key}</div>
+      <div class="mp-key">${e.p.key || '📱'}</div>
       <div class="mp-count">0</div>
     `;
     pad.addEventListener('pointerdown', (ev) => {
@@ -2859,7 +2923,7 @@ function showWin(player) {
   document.getElementById('winner-name').style.backgroundClip = 'text';
   document.getElementById('winner-name').style.color = 'transparent';
   document.getElementById('win-screen').classList.add('show');
-  slotConns.forEach(c => c && safeSend(c, { type: 'win', name: player.name }));
+  connsBySlot.forEach(c => safeSend(c, { type: 'win', name: player.name }));
 
   // Confetti
   for (let i = 0; i < 80; i++) {
@@ -2884,14 +2948,13 @@ function showWin(player) {
 
 // ===== Phone controllers (WebRTC via PeerJS) =====
 // The big screen ("host") creates a room; phones scan a QR code (or type the
-// room code) to open this same page in controller mode. Each phone claims a
-// player and gets a giant mash button plus draw/bonus buttons for their turn.
+// room code) to open this same page in controller mode. Each phone types a
+// name and joins — unlimited players, each with a unique auto-assigned color.
 let hostPeer = null;
 let roomCode = null;
 let gameStarted = false;
 let remotePressHandler = null; // set while a mash contest is running
-const slotConns = [null, null, null, null, null]; // one connection per player slot
-const slotOwners = [null, null, null, null, null]; // device ID that owns each character
+const connsBySlot = new Map(); // player slot -> live connection
 const allConns = new Set();
 const hostConns = new Set(); // phones acting as the game host/admin
 const HOST_PASS = atob('SG9uM3lEM3chISE='); // host passcode (lightly obscured)
@@ -2905,6 +2968,7 @@ function randomCode() {
 }
 
 function safeSend(conn, msg) { try { conn.send(msg); } catch (e) { /* conn gone */ } }
+function cleanId(v) { return typeof v === 'string' ? v.slice(0, 32) : null; }
 
 function enablePhoneControllers() {
   if (hostPeer) return;
@@ -2935,7 +2999,7 @@ function enablePhoneControllers() {
     if ((location.protocol === 'http:' || location.protocol === 'https:') && typeof QRCode !== 'undefined') {
       const joinUrl = location.origin + location.pathname + '?join=' + roomCode;
       new QRCode(qrBox, { text: joinUrl, width: 118, height: 118 });
-      status.textContent = 'Scan with each phone, then pick your player!';
+      status.textContent = 'Scan with each phone, type a name, and join — as many players as you like!';
     } else {
       qrBox.style.display = 'none';
       status.textContent = 'Open this game on each phone and tap "Enter a code" with the code above. (QR scanning needs the game hosted at a web address, not opened as a local file.)';
@@ -2944,22 +3008,29 @@ function enablePhoneControllers() {
 
   hostPeer.on('connection', (conn) => {
     allConns.add(conn);
-    conn.on('open', () => sendSlots(conn));
     conn.on('data', (msg) => handleControllerMsg(conn, msg));
     conn.on('close', () => {
       allConns.delete(conn);
       hostConns.delete(conn);
-      const slot = slotConns.indexOf(conn);
-      if (slot !== -1) slotConns[slot] = null;
+      for (const [slot, c] of connsBySlot) {
+        if (c === conn) {
+          connsBySlot.delete(slot);
+          // In the lobby, a departing phone leaves the roster entirely, so
+          // ghosts never pile up and rejoining always gets a fresh spot.
+          if (!gameStarted) {
+            rosterPlayers = rosterPlayers.filter(pl => pl.slot !== slot);
+            renderLobbyRoster();
+          }
+          break;
+        }
+      }
       updatePhoneStatus();
-      broadcastSlots();
+      broadcastRoster();
     });
   });
 
   hostPeer.on('error', (err) => {
     if (err.type === 'unavailable-id') {
-      // Our previous session's room ID hasn't been released by the broker yet
-      // (happens right after a restart) — retry shortly.
       status.textContent = 'Re-opening the room…';
       setTimeout(() => {
         try { hostPeer.destroy(); } catch (e) {}
@@ -2989,48 +3060,51 @@ function showRejoinPanel() {
   document.getElementById('rejoin-code').textContent = roomCode;
 }
 
-function slotInfo() {
-  const slots = [];
-  for (let i = 0; i < playerCount; i++) {
-    let name;
-    if (gameStarted) {
-      const pl = players.find(pp => pp.slot === i);
-      name = pl ? pl.name : PLAYER_COLORS[i].name;
-    } else {
-      const el = document.getElementById(`p-name-${i}`);
-      name = (el && el.value.trim()) || PLAYER_COLORS[i].name;
-    }
-    slots.push({ slot: i, name, colorHex: PLAYER_COLORS[i].hex, key: MASH_KEYS[i], taken: !!slotConns[i] });
-  }
-  return slots;
+function rosterPayload() {
+  return {
+    type: 'roster',
+    started: gameStarted,
+    hostTaken: liveHostExists(),
+    players: rosterPlayers.map(pl => ({ name: pl.name, colorHex: pl.color.hex })),
+  };
 }
+function sendRoster(conn) { safeSend(conn, rosterPayload()); }
+function broadcastRoster() { const pay = rosterPayload(); allConns.forEach(c => safeSend(c, pay)); }
 
 function liveHostExists() {
   for (const c of hostConns) if (c.open) return true;
   return false;
 }
-function sendSlots(conn) { safeSend(conn, { type: 'slots', slots: slotInfo(), hostTaken: liveHostExists(), started: gameStarted }); }
-function broadcastSlots() { allConns.forEach(c => sendSlots(c)); }
 
 function updatePhoneStatus() {
   if (!hostPeer) return;
   const el = document.getElementById('phone-status');
-  const chips = slotInfo().filter(sl => sl.taken)
-    .map(sl => `<span class="phone-chip" style="background:${sl.colorHex}">📱 ${escapeHtml(sl.name)}</span>`);
-  if (chips.length) el.innerHTML = 'Connected: ' + chips.join(' ');
+  if (rosterPlayers.length) {
+    el.textContent = `${rosterPlayers.length} player${rosterPlayers.length === 1 ? '' : 's'} joined — scan to add more!`;
+  }
 }
 
-// The big button currently waiting to be pressed on the game screen, if any.
-// This is what a host phone's admin button remote-clicks.
+function attachConnToPlayer(conn, pl) {
+  const old = connsBySlot.get(pl.slot);
+  if (old && old !== conn) {
+    allConns.delete(old);
+    try { old.close(); } catch (e) {}
+  }
+  connsBySlot.set(pl.slot, conn);
+  conn._slot = pl.slot;
+  safeSend(conn, { type: 'claimed', name: pl.name, colorHex: pl.color.hex, key: pl.key });
+  sendStateTo(conn);
+}
+
 // Update the names shown on the opening-mash pads (built in slot order)
 function refreshMashPadNames() {
-  if (!rosterPlayers) return;
   const bySlot = [...rosterPlayers].sort((a, b) => a.slot - b.slot);
   document.querySelectorAll('#mash-pads .mash-pad .mp-name').forEach((el, i) => {
     if (bySlot[i]) el.textContent = bySlot[i].name;
   });
 }
 
+// The big button currently waiting to be pressed on the game screen, if any.
 function currentPrimaryButton() {
   const duel = document.getElementById('duel-screen');
   if (duel.classList.contains('show')) {
@@ -3053,23 +3127,53 @@ function sendHostState(conn) {
   safeSend(conn, {
     type: 'hostState',
     label: btn ? btn.textContent.trim() : null,
-    canSetCount: !gameStarted && setupScreen.style.display !== 'none',
-    count: playerCount,
   });
 }
 function broadcastHostState() { hostConns.forEach(c => sendHostState(c)); }
 
 function handleControllerMsg(conn, msg) {
   if (!msg || typeof msg !== 'object') return;
-  if (msg.type === 'hello') { sendSlots(conn); return; }
+
+  if (msg.type === 'hello') {
+    // Mid-game, a reconnecting phone is recognized by its device ID and
+    // silently reattached to its player — this lives on the BIG screen now,
+    // so phones carry no character binding at all.
+    const devId = cleanId(msg.deviceId);
+    if (devId && gameStarted) {
+      const mine = rosterPlayers.find(pl => pl.deviceId === devId);
+      if (mine) attachConnToPlayer(conn, mine);
+    }
+    sendRoster(conn);
+    return;
+  }
+
+  if (msg.type === 'join') {
+    const devId = cleanId(msg.deviceId);
+    const name = (typeof msg.name === 'string' && msg.name.trim())
+      ? msg.name.trim().slice(0, 14)
+      : `Player ${rosterPlayers.length + 1}`;
+    let pl = devId ? rosterPlayers.find(pp => pp.deviceId === devId) : null;
+    if (pl) {
+      if (!gameStarted) { pl.name = name; }
+      attachConnToPlayer(conn, pl);
+    } else if (gameStarted) {
+      safeSend(conn, { type: 'wait', reason: "Game in progress — you'll join the next game!" });
+      return;
+    } else {
+      pl = makePlayer(name, devId);
+      rosterPlayers.push(pl);
+      attachConnToPlayer(conn, pl);
+    }
+    renderLobbyRoster();
+    updatePhoneStatus();
+    broadcastRoster();
+    return;
+  }
+
   if (msg.type === 'claimHost') {
-    const devId = typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 32) : null;
+    const devId = cleanId(msg.deviceId);
     const passOk = typeof msg.pass === 'string' && msg.pass === HOST_PASS;
     const remembered = !!(devId && approvedHostDevices.has(devId));
-    // Rules, in order:
-    // 1. The remembered host device may always rejoin (its own refresh).
-    // 2. Otherwise, if a live host already exists, nobody else may join.
-    // 3. Otherwise the passcode is required.
     if (!remembered && !conn._isHost && liveHostExists()) {
       safeSend(conn, { type: 'hostDenied', reason: "There's already a host!" });
       return;
@@ -3083,101 +3187,62 @@ function handleControllerMsg(conn, msg) {
       hostConns.add(conn);
       safeSend(conn, { type: 'hostClaimed' });
       sendHostState(conn);
-      broadcastSlots(); // hide the Join-as-Host button on everyone else's phone
+      broadcastRoster(); // hide the Join-as-Host button on everyone else's phone
     } else {
       safeSend(conn, { type: 'hostDenied', reason: 'Wrong passcode!' });
     }
     return;
   }
+
   if (msg.type === 'admin' && conn._isHost) {
     if (msg.action === 'primary') {
       const btn = currentPrimaryButton();
       if (btn) btn.click();
-    } else if (msg.action === 'setCount' && !gameStarted) {
-      const target = document.querySelector(`.pc-btn[data-count="${msg.count | 0}"]`);
-      if (target) target.click();
     } else if (msg.action === 'restart') {
-      // In-memory rematch: same players and names, straight to the mash screen
       rematch();
     }
     broadcastHostState();
     return;
   }
-  if (msg.type === 'claim') {
-    const sl = msg.slot | 0;
-    const deviceId = typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 32) : null;
-    if (sl >= 0 && sl < playerCount) {
-      const old = slotConns[sl];
-      const oldAlive = !!(old && old !== conn && old.open);
-      const sameDevice = !!(deviceId && slotOwners[sl] === deviceId);
-      // A character can be claimed if: it's free, its old connection is dead
-      // (a refreshed phone), or the SAME device that owned it is reclaiming it.
-      // A different phone can never steal a character that's still connected.
-      if (!old || !oldAlive || sameDevice) {
-        if (old && old !== conn) {
-          allConns.delete(old);
-          try { old.close(); } catch (e) {}
-        }
-        // Adopt the name the player typed on their phone (before game start)
-        if (!gameStarted && typeof msg.name === 'string' && msg.name.trim()) {
-          const nameEl = document.getElementById(`p-name-${sl}`);
-          if (nameEl) nameEl.value = msg.name.trim().slice(0, 14);
-        }
-        slotConns[sl] = conn;
-        slotOwners[sl] = deviceId || slotOwners[sl];
-        conn._slot = sl;
-        safeSend(conn, { type: 'claimed', ...slotInfo()[sl] });
-        sendStateTo(conn);
-      } else {
-        safeSend(conn, { type: 'denied', reason: 'That player is being used on another phone!' });
-      }
-    } else {
-      safeSend(conn, { type: 'denied', reason: 'That player is not in this game.' });
-    }
-    updatePhoneStatus();
-    broadcastSlots();
-    return;
-  }
+
   const slot = conn._slot;
   if (slot === undefined || slot === null) return;
+
   if (msg.type === 'rename') {
     const newName = typeof msg.name === 'string' ? msg.name.trim().slice(0, 14) : '';
-    if (newName && rosterPlayers) {
-      const pl = rosterPlayers.find(pp => pp.slot === slot);
-      if (pl) {
-        pl.name = newName;
-        const nameEl = document.getElementById(`p-name-${slot}`);
-        if (nameEl) nameEl.value = newName;
-        refreshMashPadNames();
-        if (gameStarted && document.getElementById('game-ui').style.display !== 'none') {
-          updatePlayerPanel();
-          updateTopBar();
-        }
-        safeSend(conn, { type: 'renamed', name: newName });
-        updatePhoneStatus();
-        broadcastSlots();
+    const pl = rosterPlayers.find(pp => pp.slot === slot);
+    if (newName && pl) {
+      pl.name = newName;
+      renderLobbyRoster();
+      refreshMashPadNames();
+      if (gameStarted && document.getElementById('game-ui').style.display !== 'none') {
+        updatePlayerPanel();
+        updateTopBar();
       }
+      safeSend(conn, { type: 'renamed', name: newName });
+      updatePhoneStatus();
+      broadcastRoster();
     }
     return;
   }
   if (msg.type === 'press') {
     if (remotePressHandler) remotePressHandler(slot);
   } else if (msg.type === 'draw') {
-    if (gameStarted && canDraw && players[currentPlayerIdx].slot === slot && !players[currentPlayerIdx].finished) drawCard();
+    if (gameStarted && canDraw && players[currentPlayerIdx] && players[currentPlayerIdx].slot === slot && !players[currentPlayerIdx].finished) drawCard();
   } else if (msg.type === 'bonus') {
-    if (gameStarted && canDraw && players[currentPlayerIdx].slot === slot && !players[currentPlayerIdx].finished) useBonusDraw();
+    if (gameStarted && canDraw && players[currentPlayerIdx] && players[currentPlayerIdx].slot === slot && !players[currentPlayerIdx].finished) useBonusDraw();
   }
 }
 
 function sendStateTo(conn) {
   const slot = conn._slot;
   if (slot === undefined || slot === null) return;
-  const pl = gameStarted ? players.find(pp => pp.slot === slot) : null;
-  const myTurn = !!(pl && players[currentPlayerIdx] === pl);
+  const pl = rosterPlayers.find(pp => pp.slot === slot);
+  const inRound = gameStarted && players.length > 0;
+  const myTurn = !!(pl && inRound && players[currentPlayerIdx] === pl);
   safeSend(conn, {
     type: 'state',
     started: gameStarted,
-    // (started is used by phones for the your-turn screen color)
     mashActive: !!remotePressHandler,
     yourTurn: myTurn,
     canDraw: !!(pl && myTurn && canDraw && !pl.finished),
@@ -3186,7 +3251,7 @@ function sendStateTo(conn) {
   });
 }
 function broadcastState() {
-  slotConns.forEach(c => c && sendStateTo(c));
+  connsBySlot.forEach(c => sendStateTo(c));
   broadcastHostState();
 }
 
@@ -3206,21 +3271,22 @@ function initControllerMode(code) {
   const screen = document.getElementById('controller-screen');
   screen.classList.add('show');
   const statusEl = document.getElementById('ctrl-status');
-  const slotsEl = document.getElementById('ctrl-slots');
   const padEl = document.getElementById('ctrl-pad');
   const mashBtn = document.getElementById('ctrl-mash');
   const drawBtn = document.getElementById('ctrl-draw');
   const bonusBtn = document.getElementById('ctrl-bonus');
   const nameRow = document.getElementById('ctrl-name-row');
   const nameInput = document.getElementById('ctrl-name');
+  const joinBtn = document.getElementById('ctrl-join-btn');
   const hostJoinBtn = document.getElementById('ctrl-host-join');
   const hostPad = document.getElementById('ctrl-host-pad');
   const hostPrimary = document.getElementById('ctrl-host-primary');
-  const hostCountRow = document.getElementById('ctrl-host-count');
   let myInfo = null;
   let isHost = false;
-  let hostTaken = false; // someone (possibly us) already holds the host seat
-  let wasMyTurn = false; // for the your-turn vibration nudge
+  let hostTaken = false;
+  let wantsJoin = false;   // auto-join at the next lobby (queued mid-game / reconnect)
+  let gameRunning = false; // last known 'started' from the big screen
+  let wasMyTurn = false;
   let conn = null;
 
   function updateHostJoinVisibility() {
@@ -3228,10 +3294,26 @@ function initControllerMode(code) {
     hostJoinBtn.style.display = show ? 'block' : 'none';
     if (!show) document.getElementById('ctrl-host-pass').style.display = 'none';
   }
+  function updateJoinUI() {
+    const showJoin = !myInfo;
+    nameRow.style.display = showJoin ? 'block' : 'none';
+    joinBtn.style.display = showJoin ? 'block' : 'none';
+    if (showJoin) {
+      if (gameRunning) {
+        joinBtn.disabled = true;
+        joinBtn.textContent = '\u23F3 Game in progress\u2026';
+        statusEl.textContent = "You'll join automatically when the next game starts!";
+        wantsJoin = true;
+      } else {
+        joinBtn.disabled = false;
+        joinBtn.textContent = '\U0001F3AE Join Game';
+      }
+    }
+  }
 
-  // A permanent random ID for THIS phone's browser, stored like a cookie.
-  // The host uses it to verify that a rejoining phone really owned its
-  // character, so two kids refreshing at once can't cross wires.
+  // A permanent random ID for THIS phone's browser. The big screen uses it
+  // only for MID-GAME reconnects (so a refreshed phone gets its pawn back).
+  // It never pins you to a color or character between games.
   const DEVICE_KEY = 'sweetpath_device';
   let deviceId = null;
   try { deviceId = localStorage.getItem(DEVICE_KEY); } catch (e) {}
@@ -3240,36 +3322,33 @@ function initControllerMode(code) {
     try { localStorage.setItem(DEVICE_KEY, deviceId); } catch (e) {}
   }
 
-  // Remember which character (or host role) this phone claimed so a refresh rejoins automatically
+  // Saved preferences: just the last-used name (for prefill) and whether this
+  // device held the host seat in this room. NO character/color binding.
   const SAVE_KEY = 'sweetpath_ctrl';
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) {}
-  const sameRoom = !!(saved && saved.code === code.toUpperCase());
-  let autoClaimSlot = (sameRoom && Number.isInteger(saved.slot)) ? saved.slot : null;
-  let autoClaimHost = !!(sameRoom && saved.host);
-  if (saved && saved.name) nameInput.value = saved.name;
-  let savedObj = sameRoom && saved ? saved : {};
+  let savedObj = {};
+  try { savedObj = JSON.parse(localStorage.getItem(SAVE_KEY)) || {}; } catch (e) {}
+  if (savedObj.name) nameInput.value = savedObj.name;
+  let autoClaimHost = !!(savedObj.host && savedObj.code === code.toUpperCase());
   function persist(patch) {
     savedObj = { ...savedObj, code: code.toUpperCase(), ...patch };
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(savedObj)); } catch (e) {}
   }
   function updateHeader() {
     const header = document.getElementById('ctrl-header');
-    if (myInfo && isHost) header.textContent = myInfo.name + ' 👑';
+    if (myInfo && isHost) header.textContent = `${myInfo.name} \U0001F451`;
     else if (myInfo) header.textContent = myInfo.name;
-    else if (isHost) header.textContent = 'Host 👑';
+    else if (isHost) header.textContent = 'Host \U0001F451';
     if (myInfo) header.style.color = myInfo.colorHex;
   }
 
-  // Belt-and-suspenders zoom guards: some browsers ignore parts of the
-  // viewport meta, so block pinch and double-tap zoom at the event level too.
+  // Zoom guards for rapid mashing
   document.addEventListener('gesturestart', (e) => e.preventDefault());
   document.addEventListener('gesturechange', (e) => e.preventDefault());
   document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
   let lastTouchEnd = 0;
   document.addEventListener('touchend', (e) => {
     const now = Date.now();
-    if (now - lastTouchEnd < 350) e.preventDefault(); // swallow double-taps
+    if (now - lastTouchEnd < 350) e.preventDefault();
     lastTouchEnd = now;
   }, { passive: false });
 
@@ -3292,25 +3371,26 @@ function initControllerMode(code) {
     conn.on('open', () => {
       everConnected = true;
       statusEl.textContent = 'Connected!';
-      conn.send({ type: 'hello' });
+      conn.send({ type: 'hello', deviceId });
     });
     conn.on('data', onMsg);
     conn.on('close', () => scheduleReconnect());
   }
 
-  // When the big screen restarts (e.g. the host pressed Restart Game or Play
-  // Again), the room code stays the same — so instead of making everyone
-  // rescan, quietly reconnect and reclaim this phone's saved role(s).
   function scheduleReconnect() {
+    // If we were playing, queue an auto-rejoin for the next lobby (mid-game
+    // reconnects are handled by the big screen via deviceId on 'hello').
+    if (myInfo) wantsJoin = true;
     myInfo = null;
     isHost = false;
     hostTaken = false;
-    autoClaimSlot = (savedObj && Number.isInteger(savedObj.slot)) ? savedObj.slot : null;
-    autoClaimHost = !!(savedObj && savedObj.host);
+    autoClaimHost = !!(savedObj.host && savedObj.code === code.toUpperCase());
     mashBtn.disabled = true;
     drawBtn.disabled = true;
     bonusBtn.classList.remove('show');
     hostPrimary.disabled = true;
+    screen.classList.remove('your-turn');
+    padEl.classList.remove('show');
     statusEl.textContent = 'Game screen restarting… reconnecting';
     clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(connectToHost, 2500);
@@ -3331,48 +3411,38 @@ function initControllerMode(code) {
     }
   });
 
+  function sendJoin() {
+    if (!(conn && conn.open)) return;
+    const v = nameInput.value.trim();
+    if (v) persist({ name: v });
+    conn.send({ type: 'join', name: v, deviceId });
+  }
+
   function onMsg(msg) {
     if (!msg || typeof msg !== 'object') return;
-    if (msg.type === 'slots') {
+
+    if (msg.type === 'roster') {
       hostTaken = !!msg.hostTaken;
+      gameRunning = !!msg.started;
       updateHostJoinVisibility();
-      if (myInfo) return;
-      // The host role auto-restores any time (it has no name attached)
       if (autoClaimHost) {
         autoClaimHost = false;
         statusEl.textContent = 'Rejoining as host…';
         conn.send({ type: 'claimHost', deviceId });
       }
-      // Silent character reclaim is for MID-GAME reconnects only. Before the
-      // game starts we always show the name field, so players can enter or
-      // change their names for the new game.
-      if (autoClaimSlot !== null && msg.started) {
-        const mine = msg.slots.find(sl => sl.slot === autoClaimSlot);
-        autoClaimSlot = null; // only try once
-        if (mine) {
-          statusEl.textContent = `Rejoining as ${mine.name}…`;
-          conn.send({ type: 'claim', slot: mine.slot, deviceId, name: nameInput.value.trim() });
+      if (!myInfo) {
+        // Queued phones hop in the moment the lobby opens
+        if (wantsJoin && !gameRunning) {
+          wantsJoin = false;
+          sendJoin();
           return;
         }
+        updateJoinUI();
       }
-      nameRow.style.display = 'block';
-      if (!isHost) statusEl.textContent = 'Type your name, then pick your player:';
-      slotsEl.innerHTML = '';
-      msg.slots.forEach(sl => {
-        const b = document.createElement('button');
-        b.className = 'ctrl-slot-btn';
-        b.style.background = sl.colorHex;
-        const wasMine = !!(savedObj && savedObj.slot === sl.slot);
-        b.textContent = (sl.taken ? `${sl.name} (rejoin)` : sl.name) + (wasMine ? ' ⭐' : '');
-        b.onclick = () => conn.send({ type: 'claim', slot: sl.slot, deviceId, name: nameInput.value.trim() });
-        slotsEl.appendChild(b);
-      });
     } else if (msg.type === 'claimed') {
       myInfo = msg;
-      persist({ slot: msg.slot, name: msg.name });
-      slotsEl.style.display = 'none';
-      nameRow.style.display = 'none';
-      // Becoming host afterward is still possible if no one holds the seat
+      if (msg.name) persist({ name: msg.name });
+      updateJoinUI();
       updateHostJoinVisibility();
       padEl.classList.add('show');
       updateHeader();
@@ -3380,7 +3450,12 @@ function initControllerMode(code) {
       mashBtn.style.background = `linear-gradient(160deg, ${msg.colorHex}, ${msg.colorHex}cc)`;
       statusEl.textContent = isHost
         ? `You're ${msg.name} AND the host!`
-        : `You're ${msg.name}! Waiting for the game…`;
+        : `You're in, ${msg.name}!` + (msg.key ? ` (Your big-screen key: ${msg.key})` : '');
+    } else if (msg.type === 'wait') {
+      wantsJoin = true;
+      gameRunning = true;
+      updateJoinUI();
+      statusEl.textContent = msg.reason || "Game in progress — you'll join the next game!";
     } else if (msg.type === 'hostClaimed') {
       isHost = true;
       hostTaken = true;
@@ -3388,10 +3463,9 @@ function initControllerMode(code) {
       updateHostJoinVisibility();
       hostPad.style.display = 'block';
       updateHeader();
-      // Still allow picking a character after becoming the host
       statusEl.textContent = myInfo
         ? `You're ${myInfo.name} AND the host!`
-        : "You're running the show! You can also pick a character below to play.";
+        : "You're running the show! You can also join the game below.";
     } else if (msg.type === 'hostState' && isHost) {
       if (msg.label) {
         hostPrimary.textContent = msg.label;
@@ -3400,37 +3474,26 @@ function initControllerMode(code) {
         hostPrimary.textContent = 'Waiting…';
         hostPrimary.disabled = true;
       }
-      hostCountRow.innerHTML = '';
-      if (msg.canSetCount) {
-        for (let n = 2; n <= 5; n++) {
-          const b = document.createElement('button');
-          b.className = 'pc-btn' + (n === msg.count ? ' active' : '');
-          b.textContent = n;
-          b.onclick = () => conn.send({ type: 'admin', action: 'setCount', count: n });
-          hostCountRow.appendChild(b);
-        }
+    } else if (msg.type === 'newGame') {
+      if (myInfo) {
+        const rn = document.getElementById('ctrl-rename');
+        rn.value = myInfo.name;
+        document.getElementById('ctrl-rename-row').style.display = 'flex';
+        screen.classList.remove('your-turn');
+        statusEl.textContent = 'New game! Change your name if you want, then tap \u2713.';
       }
-    } else if (msg.type === 'hostDenied') {
-      statusEl.textContent = '❌ ' + (msg.reason || 'Wrong passcode!') + (hostTaken ? '' : ' Try again — or just pick a character and play.');
-      const pi = document.getElementById('ctrl-pass-input');
-      pi.value = '';
-      if (!hostTaken) document.getElementById('ctrl-host-pass').style.display = 'flex';
-    } else if (msg.type === 'newGame' && myInfo) {
-      const rn = document.getElementById('ctrl-rename');
-      rn.value = myInfo.name;
-      document.getElementById('ctrl-rename-row').style.display = 'flex';
-      screen.classList.remove('your-turn');
-      statusEl.textContent = 'New game! Change your name if you want, then tap ✓.';
     } else if (msg.type === 'renamed') {
       if (myInfo) myInfo.name = msg.name;
       persist({ name: msg.name });
       nameInput.value = msg.name;
       updateHeader();
       document.getElementById('ctrl-rename-row').style.display = 'none';
-      statusEl.textContent = `You're ${msg.name} — get ready to MASH!`;
-    } else if (msg.type === 'denied') {
-      statusEl.textContent = (msg.reason || 'Could not claim that player') + ' Pick one below!';
-      conn.send({ type: 'hello' });
+      statusEl.textContent = `You're ${msg.name} — ready to play!`;
+    } else if (msg.type === 'hostDenied') {
+      statusEl.textContent = '\u274C ' + (msg.reason || 'Wrong passcode!') + (hostTaken ? '' : ' Try again — or just join and play.');
+      const pi = document.getElementById('ctrl-pass-input');
+      pi.value = '';
+      if (!hostTaken) document.getElementById('ctrl-host-pass').style.display = 'flex';
     } else if (msg.type === 'state' && myInfo) {
       const myTurnNow = !!(msg.yourTurn && !msg.finished && msg.started && !msg.mashActive);
       if (msg.mashActive) document.getElementById('ctrl-rename-row').style.display = 'none';
@@ -3442,19 +3505,23 @@ function initControllerMode(code) {
       mashBtn.disabled = !msg.mashActive;
       drawBtn.disabled = !msg.canDraw;
       bonusBtn.classList.toggle('show', msg.canDraw && msg.bonusDraws > 0);
-      if (msg.bonusDraws > 0) bonusBtn.textContent = `🎁 Bonus Draw ×${msg.bonusDraws}`;
-      if (msg.finished) statusEl.textContent = '🏰 You made it to the castle!';
-      else if (msg.mashActive) statusEl.textContent = '⚡ MASH MASH MASH! ⚡';
-      else if (msg.canDraw) statusEl.textContent = '⭐ Your turn — draw a card!';
-      else if (!msg.started) statusEl.textContent = 'Waiting for the game to start…';
+      if (msg.bonusDraws > 0) bonusBtn.textContent = `\U0001F381 Bonus Draw \u00d7${msg.bonusDraws}`;
+      if (msg.finished) statusEl.textContent = '\U0001F3F0 You made it to the castle!';
+      else if (msg.mashActive) statusEl.textContent = '\u26A1 MASH MASH MASH! \u26A1';
+      else if (msg.canDraw) statusEl.textContent = '\u2B50 Your turn — draw a card!';
+      else if (!msg.started) statusEl.textContent = 'In the lobby — waiting for the game to start…';
       else statusEl.textContent = 'Waiting for your turn…';
     } else if (msg.type === 'win') {
-      statusEl.textContent = `👑 ${msg.name} won the game!`;
+      statusEl.textContent = `\U0001F451 ${msg.name} won the game!`;
+      screen.classList.remove('your-turn');
       mashBtn.disabled = true;
       drawBtn.disabled = true;
       bonusBtn.classList.remove('show');
     }
   }
+
+  joinBtn.addEventListener('click', sendJoin);
+  nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendJoin(); });
 
   const hostPassRow = document.getElementById('ctrl-host-pass');
   const passInput = document.getElementById('ctrl-pass-input');
@@ -3480,7 +3547,7 @@ function initControllerMode(code) {
     if (!(conn && conn.open)) return;
     const v = document.getElementById('ctrl-rename').value.trim();
     if (v) conn.send({ type: 'rename', name: v });
-    else document.getElementById('ctrl-rename-row').style.display = 'none'; // empty = keep current name
+    else document.getElementById('ctrl-rename-row').style.display = 'none';
   });
   document.getElementById('ctrl-host-restart').addEventListener('click', () => {
     if (conn && conn.open && confirm('Restart the whole game for everyone?')) {
